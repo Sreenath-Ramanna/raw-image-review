@@ -2,12 +2,22 @@
 //
 // Main application screen: browse button, image canvas, metadata panel.
 
+import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'raw_decoder.dart';
+
+/// Scale that makes [image] fit entirely within [canvas] — both width and
+/// height end up no larger than the viewing area. Limited by the tighter of
+/// the two axes, so the whole frame is visible rather than cropped.
+double fitScaleFor(Size image, Size canvas) => math.min(
+      canvas.width / image.width,
+      canvas.height / image.height,
+    );
 
 class ViewerScreen extends StatefulWidget {
   const ViewerScreen({super.key});
@@ -17,14 +27,54 @@ class ViewerScreen extends StatefulWidget {
 }
 
 class _ViewerScreenState extends State<ViewerScreen> {
+  // A full-resolution RAW in a typical window fits at roughly 0.16, so the
+  // lower bound has to leave room well below that.
+  static const double _minScale = 0.01;
+  static const double _maxScale = 20.0;
+
   ui.Image? _image;
   RawMeta? _meta;
+  String? _fileName;
   bool _loading = false;
   String? _error;
 
-  // Zoom / pan state
+  // Zoom / pan state. _scale maps image pixels to logical screen pixels, so
+  // 1.0 is exactly 1:1.
   double _scale = 1.0;
   Offset _offset = Offset.zero;
+
+  // Used to measure the canvas when fitting; the size is only known after
+  // layout, so read it from the render object rather than tracking it in state.
+  final GlobalKey _canvasKey = GlobalKey();
+
+  Size? get _canvasSize {
+    final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return null;
+    return box.size;
+  }
+
+  /// Scale at which the whole image fits inside the canvas on both axes.
+  double? get _fitScale {
+    final image = _image;
+    final canvas = _canvasSize;
+    if (image == null || canvas == null || canvas.isEmpty) return null;
+    return fitScaleFor(
+      Size(image.width.toDouble(), image.height.toDouble()),
+      canvas,
+    );
+  }
+
+  void _setScale(double scale) {
+    setState(() {
+      _scale = scale.clamp(_minScale, _maxScale);
+      _offset = Offset.zero;
+    });
+  }
+
+  void _fitToWindow() {
+    final fit = _fitScale;
+    if (fit != null) _setScale(fit);
+  }
 
   Future<void> _browse() async {
     final result = await FilePicker.platform.pickFiles(
@@ -62,6 +112,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _error = null;
       _image = null;
       _meta = null;
+      _fileName = path.split(Platform.pathSeparator).last;
       _scale = 1.0;
       _offset = Offset.zero;
     });
@@ -133,20 +184,33 @@ class _ViewerScreenState extends State<ViewerScreen> {
             IconButton(
               tooltip: 'Zoom in',
               icon: const Icon(Icons.zoom_in, color: Colors.white70),
-              onPressed: () => setState(() => _scale = (_scale * 1.25).clamp(0.1, 20.0)),
+              onPressed: () => setState(
+                  () => _scale = (_scale * 1.25).clamp(_minScale, _maxScale)),
             ),
             IconButton(
               tooltip: 'Zoom out',
               icon: const Icon(Icons.zoom_out, color: Colors.white70),
-              onPressed: () => setState(() => _scale = (_scale / 1.25).clamp(0.1, 20.0)),
+              onPressed: () => setState(
+                  () => _scale = (_scale / 1.25).clamp(_minScale, _maxScale)),
             ),
             IconButton(
               tooltip: 'Fit to window',
               icon: const Icon(Icons.fit_screen, color: Colors.white70),
-              onPressed: () => setState(() {
-                _scale = 1.0;
-                _offset = Offset.zero;
-              }),
+              onPressed: _fitToWindow,
+            ),
+            TextButton(
+              onPressed: () => _setScale(1.0),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white70,
+                minimumSize: const Size(40, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                textStyle: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              child: const Tooltip(
+                message: 'Actual size (100%)',
+                child: Text('1:1'),
+              ),
             ),
           ],
           const Spacer(),
@@ -208,6 +272,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
         // crossAxisAlignment.center hands down loose vertical constraints, so
         // without this the painter collapses to zero height and draws nothing.
         child: SizedBox.expand(
+          key: _canvasKey,
           child: CustomPaint(
             painter: _ImagePainter(
               image: _image!,
@@ -228,6 +293,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_fileName != null) ...[
+            Tooltip(
+              message: _fileName!,
+              child: Text(
+                _fileName!,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Color(0xDEFFFFFF),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           const Text('EXIF',
               style: TextStyle(
                   color: Colors.white70,

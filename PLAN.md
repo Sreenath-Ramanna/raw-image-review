@@ -80,8 +80,11 @@ Last updated: 2026-08-26
   `constrain(Size.zero)` collapsed it to zero height. Measured: `Size(580.0, 0.0)` before,
   `Size(580.0, 552.0)` after. The image was being painted into a zero-height box all along.
   Fix: wrap the painter in `SizedBox.expand`. Regression test: `test/canvas_layout_test.dart`.
-- [ ] **2.9 "Fit to window" does not fit** — the button (`viewer_screen.dart:145`) just sets
-  `_scale = 1.0`, which is 1:1, not fit. Same root cause as 3.2; fix them together.
+- [x] **2.9 "Fit to window" now actually fits** — FIXED 2026-08-26. The button used to just set
+  `_scale = 1.0` (1:1, not fit). Now scales by the tighter of the two axes via `fitScaleFor()`,
+  so the whole frame is visible. Also added a **1:1 button** for true 100%, and lowered the zoom
+  floor from 0.1 to 0.01 — a 6984px image in a 1146px canvas fits at ~0.16, and a smaller window
+  would have hit the old clamp. Covered by `test/fit_scale_test.dart`.
 
 ## Phase 3 — Make it usable
 
@@ -89,8 +92,12 @@ Last updated: 2026-08-26
   instant display, then swap in the full decode. **Measured 2.1–3.5 s per file** on this machine
   (Z 6_2 24MP ≈ 2.2 s, R7 33MP ≈ 2.8 s), so this is the single biggest usability win available.
   Metadata alone is 1–5 ms, so the EXIF panel can populate essentially instantly.
-- [ ] **3.2 Fit-to-window on load** — `_scale = 1.0` means a 8000px image opens at 1:1 and overflows.
-  Compute the fit scale from the canvas size instead.
+- [ ] **3.2 Fit-to-window *on load*** — the button works now (2.9), but opening a file still starts
+  at 1:1, showing a centre crop until the user clicks Fit. `_fitScale` is available; the wrinkle is
+  that the canvas has not been laid out when `_decodeFile` sets state, so the fit has to be applied
+  after the first frame (e.g. `addPostFrameCallback`) or computed in a `LayoutBuilder`.
+- [x] **3.7 Show the file name** — base name only, above the EXIF block, ellipsised with a
+  tooltip carrying the full name.
 - [ ] **3.3 Scroll-wheel zoom** centred on the cursor, and clamp panning to the image bounds.
 - [ ] **3.4 Directory browsing** — arrow keys / filmstrip to move between RAWs in the same folder.
 - [ ] **3.5 Command-line argument** — `raw_viewer photo.cr2` should open that file.
