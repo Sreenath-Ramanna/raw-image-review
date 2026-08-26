@@ -47,8 +47,9 @@ typedef struct {
     float shutter;       /* exposure time in seconds                        */
     float aperture;
     float focal_len;
-    int   width;
+    int   width;         /* as displayed, i.e. after orientation is applied  */
     int   height;
+    int   flip;          /* 0 none, 3 = 180, 5 = 90 CCW, 6 = 90 CW          */
 } RawImageMeta;
 
 /* ── Decode a raw file to an 8-bit RGB bitmap ───────────────────────────── */
@@ -133,8 +134,19 @@ int raw_read_meta(const char* path, RawImageMeta* out) {
     out->shutter    = lr->other.shutter;
     out->aperture   = lr->other.aperture;
     out->focal_len  = lr->other.focal_len;
-    out->width      = lr->sizes.width;
-    out->height     = lr->sizes.height;
+    out->flip       = lr->sizes.flip;
+
+    /* sizes.width/height describe the unrotated sensor area, but
+     * dcraw_process applies the camera orientation — so a portrait frame
+     * decodes transposed. Report what the user will actually see, otherwise
+     * every portrait shot claims landscape dimensions. */
+    if (lr->sizes.flip == 5 || lr->sizes.flip == 6) {
+        out->width  = lr->sizes.height;
+        out->height = lr->sizes.width;
+    } else {
+        out->width  = lr->sizes.width;
+        out->height = lr->sizes.height;
+    }
 
     libraw_close(lr);
     return 0;

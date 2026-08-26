@@ -61,6 +61,15 @@ void main() {
     expect(previewWatch.elapsedMilliseconds,
         lessThan(fullWatch.elapsedMilliseconds));
 
+    // The EXIF panel renders meta.width x meta.height, so those must describe
+    // the image as displayed. LibRaw's sizes.width/height are the unrotated
+    // sensor area, which made portrait shots report landscape dimensions.
+    expect(
+      _orientation(full.meta.width, full.meta.height),
+      _orientation(f.width, f.height),
+      reason: 'EXIF dimensions disagree with the decoded image orientation',
+    );
+
     p.dispose();
     f.dispose();
   }

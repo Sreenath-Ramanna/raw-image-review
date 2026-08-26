@@ -46,3 +46,6 @@ app.*.map.json
 
 # Local RAW test images — large binaries, not for version control
 /test-images/
+
+# Local scratch folder for screenshots
+/debug_images/

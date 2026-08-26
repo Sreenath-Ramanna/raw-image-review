@@ -36,7 +36,7 @@ void main(List<String> args) {
   print('sizeOf<RawImageResultNative> = ${sizeOf<RawImageResultNative>()} '
       '(C expects 32)');
   print('sizeOf<RawImageMetaNative>   = ${sizeOf<RawImageMetaNative>()} '
-      '(C expects 152)');
+      '(C expects 156)');
 
   final bindings = LibRawBindings.open(args[0]);
   var problems = 0;
@@ -51,7 +51,7 @@ void main(List<String> args) {
     print('  meta rc=$rc');
     print('    camera : ${_readCharArray(m.make, 64)} '
         '${_readCharArray(m.model, 64)}');
-    print('    size   : ${m.width} x ${m.height}');
+    print('    size   : ${m.width} x ${m.height}  (flip=${m.flip})');
     print('    iso=${m.isoSpeed} shutter=${m.shutter} '
         'aperture=${m.aperture} focal=${m.focalLen}');
     if (rc != 0) {
@@ -80,8 +80,9 @@ void main(List<String> args) {
         'dataSize=${r.dataSize}');
 
     if (r.width != metaWidth || r.height != metaHeight) {
-      print('    note: decoded size differs from metadata size '
-          '(expected — metadata reports the raw sensor area)');
+      print('    !! metadata size ${metaWidth}x$metaHeight disagrees with '
+          'decoded ${r.width}x${r.height}');
+      problems++;
     }
     if (r.dataSize != r.width * r.height * r.colors * (r.bits ~/ 8)) {
       print('    !! dataSize inconsistent with dimensions');

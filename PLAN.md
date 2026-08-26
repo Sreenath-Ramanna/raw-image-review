@@ -66,14 +66,15 @@ Last updated: 2026-08-26
   both matching the C side exactly. Metadata, buffer sizes and RGB→RGBA conversion all correct.
   Tool for re-running this: `dart run tool/ffi_check.dart <wrapper.so> <raw>...`
   Still unverified: `ui.decodeImageFromPixels` → canvas, which needs the GUI (see 2.8).
-- [ ] **2.7 Portrait images report the wrong resolution** — found by 2.6. `raw_read_meta` returns
-  `sizes.width/height`, which is the *unrotated* sensor area, but `dcraw_process` applies the
-  camera orientation flag. So `DSC_1441.NEF` decodes to 4040×6064 while the EXIF panel
-  (`viewer_screen.dart:233`) reports 6064×4040. The displayed pixels are correct — only the
-  metadata line lies, and only for portrait shots.
-  Fix: use `sizes.iwidth/iheight` (post-flip dims) in the wrapper, or consult `sizes.flip`
-  and swap. Verify `iwidth/iheight` are populated after `libraw_open_file` alone, since
-  `raw_read_meta` deliberately skips unpack/process.
+- [x] **2.7 Portrait images report the wrong resolution** — FIXED 2026-08-26.
+  `raw_read_meta` returned `sizes.width/height` (the unrotated sensor area) while
+  `dcraw_process` applies the orientation flag, so `DSC_1441.NEF` decoded to 4040×6064 while the
+  EXIF panel claimed 6064×4040. The wrapper now transposes for `flip == 5 || flip == 6` and also
+  exposes `flip` on the meta struct. `sizes.flip` is populated by `libraw_open_file` alone, so
+  the metadata path still skips unpack/process and stays a 1–5 ms operation.
+  Struct grew 152 → 156 bytes; `RawImageMetaNative` and `tool/ffi_check.dart` updated to match.
+  `ffi_check` now treats a metadata/decode size disagreement as a failure rather than a note,
+  and `test/preview_orientation_test.dart` asserts EXIF dimensions match the decoded image.
 - [x] **2.8 Blank canvas: decoded image never rendered** — FIXED 2026-08-26.
   Symptom: opening a CR3 populated the EXIF panel and the "6984 × 4660 px / Scale: 100%" readout
   (so the `ui.Image` existed) but the canvas stayed empty.

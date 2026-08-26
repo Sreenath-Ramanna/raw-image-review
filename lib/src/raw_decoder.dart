@@ -24,8 +24,14 @@ class RawMeta {
   final double shutter;
   final double aperture;
   final double focalLen;
+
+  /// Dimensions as displayed: already transposed for portrait frames, so they
+  /// match the decoded image rather than the unrotated sensor area.
   final int width;
   final int height;
+
+  /// LibRaw orientation code: 0 none, 3 = 180°, 5 = 90° CCW, 6 = 90° CW.
+  final int flip;
 
   const RawMeta({
     required this.make,
@@ -36,6 +42,7 @@ class RawMeta {
     required this.focalLen,
     required this.width,
     required this.height,
+    required this.flip,
   });
 
   String get shutterDisplay {
@@ -291,6 +298,7 @@ class RawDecoder {
       focalLen: m.focalLen,
       width: m.width,
       height: m.height,
+      flip: m.flip,
     );
   }
 }

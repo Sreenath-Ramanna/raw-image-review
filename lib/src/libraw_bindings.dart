@@ -68,11 +68,17 @@ final class RawImageMetaNative extends Struct {
   @Float()
   external double focalLen;
 
+  /// Dimensions as displayed — the C side transposes these for portrait
+  /// frames so they match what `dcraw_process` produces.
   @Int32()
   external int width;
 
   @Int32()
   external int height;
+
+  /// LibRaw orientation: 0 none, 3 = 180°, 5 = 90° CCW, 6 = 90° CW.
+  @Int32()
+  external int flip;
 }
 
 // ── Native function typedefs ──────────────────────────────────────────────
