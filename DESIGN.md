@@ -338,6 +338,20 @@ other EOS generations are untested — and because a wrong choice mirrors the
 point across the horizontal axis, which looks plausible rather than broken. See
 FOCUS_POINTS.md.
 
+### Deleting
+
+`moveToTrash()` shells out to `gio trash` rather than calling `File.delete()`.
+This is a culling tool aimed at original camera files, so recoverability is
+worth more than the saved process spawn; `gio` ships with glib2, which GTK
+already requires. Its stderr is surfaced verbatim, which matters because it
+refuses tmpfs and other system-internal mounts with a specific message.
+
+`indexAfterRemoval()` is a free function, testable without a widget tree. It
+keeps the same index after a removal, which lands on what *was* the next image
+so culling flows forward, and steps back only when the last entry goes. When the
+list empties, `_requestId` is bumped so an in-flight decode is discarded rather
+than painting over the empty state.
+
 ### Loading sequence
 
 ```

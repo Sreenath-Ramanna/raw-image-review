@@ -64,9 +64,25 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 | **1:1** | Actual size, one image pixel per screen pixel |
 | **Zoom in / out** | 1.25× steps |
 | Drag on the image | Pan |
+| **Delete** | Moves the current file to the Trash and drops it from the list |
+| **Confirm delete** | When ticked (default), asks before each delete |
 
 The folder scan is not recursive, matches extensions case-insensitively, and
 sorts by name. The toolbar shows the position in the folder, e.g. `3 / 13`.
+
+### Culling
+
+Delete moves the file to the desktop Trash via `gio trash` rather than
+unlinking it, so a mis-click on a keeper is recoverable from your file manager.
+Disk space is reclaimed when you empty the Trash. The deleted file is removed
+from the browsing list immediately, so Previous/Next never return to it, and the
+viewer advances to the next frame — or steps back if you deleted the last one.
+
+Untick **Confirm delete** to cull without a prompt on each file.
+
+Note: `gio trash` refuses to trash files on tmpfs and similar system-internal
+mounts. Photos on a normal disk or removable card are fine; the error is
+reported in the viewer if it happens.
 
 Files open at **1:1, centred on the camera's focus point**, so critical
 sharpness is the first thing on screen. Files with no recorded AF data fall back

@@ -237,6 +237,27 @@ focused — the view a photographer actually wants first, to check critical shar
 
 ---
 
+## Phase 6 — Culling ✅ COMPLETE
+
+- [x] **6.1 Delete the current image** — done 2026-08-27. Toolbar Delete button, placed at the far
+  end away from Previous/Next so a stray click while browsing cannot trash a frame.
+- [x] **6.2 Remove it from the browsing list** — `indexAfterRemoval()` decides what to show next:
+  hold the index (landing on what was the next frame, so culling flows forward), step back when
+  the last entry goes, null when the folder empties. Previous/Next can no longer reach the
+  deleted file. Bumps `_requestId` on emptying so an in-flight decode does not paint over the
+  empty state.
+- [x] **6.3 "Confirm delete" checkbox** — on by default; controls whether the dialog appears.
+  Focus is reclaimed after the dialog closes, same trap as the folder picker (3.4).
+- [x] **6.4 Trash rather than unlink** — user's call, taken 2026-08-27. `gio trash` keeps a
+  mis-culled keeper recoverable. `gio` ships with glib2 which GTK already requires.
+  **Found while testing:** `gio trash` refuses tmpfs with "Trashing on system internal mounts is
+  not supported", which is why the test creates its temp dir under `$HOME` rather than `/tmp`,
+  and why the wrapper surfaces gio's own stderr instead of a generic message.
+- [x] **6.5 Tests** — `test/delete_test.dart`: every removal case including an exhaustive
+  bounds sweep, plus a real `gio trash` round trip that cleans up after itself.
+
+---
+
 ## Notes / decisions
 
 - LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and

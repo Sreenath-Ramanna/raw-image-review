@@ -2,7 +2,8 @@
 //
 // Main application screen: browse button, image canvas, metadata panel.
 
-import 'dart:io' show Directory, File, Platform;
+import 'dart:io'
+    show Directory, File, Platform, Process, ProcessException, ProcessResult;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -53,6 +54,39 @@ double fitScaleFor(Size image, Size canvas) => math.min(
       canvas.height / image.height,
     );
 
+/// Moves [path] to the desktop trash.
+///
+/// Deliberately not `File.delete()`. This is a culling tool pointed at
+/// original camera files, and a mis-click on a keeper would otherwise be
+/// unrecoverable. `gio` ships with glib2, which GTK already requires.
+///
+/// Throws with the tool's own message if the file could not be trashed.
+Future<void> moveToTrash(String path) async {
+  final ProcessResult result;
+  try {
+    // `--` guards against a filename that begins with a dash.
+    result = await Process.run('gio', ['trash', '--', path]);
+  } on ProcessException catch (e) {
+    throw Exception('could not run `gio trash` (${e.message})');
+  }
+  if (result.exitCode != 0) {
+    final err = (result.stderr as String).trim();
+    throw Exception(err.isEmpty ? 'gio trash failed' : err);
+  }
+}
+
+/// Which entry to show after removing the one at [removedIndex] from a list of
+/// [length] items. Null means nothing is left.
+///
+/// Staying at the same index lands on what *was* the next image, which is what
+/// makes rapid culling feel continuous; deleting the last entry steps back
+/// instead.
+int? indexAfterRemoval({required int length, required int removedIndex}) {
+  final remaining = length - 1;
+  if (remaining <= 0) return null;
+  return removedIndex.clamp(0, remaining - 1);
+}
+
 class ViewerScreen extends StatefulWidget {
   const ViewerScreen({super.key});
 
@@ -82,6 +116,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
   // The RAW files in the opened folder, and where we are in them.
   List<String> _files = const [];
   int _index = 0;
+
+  /// Defaults to on: the confirmation is the one thing standing between a
+  /// mis-click and a file leaving the folder.
+  bool _confirmDelete = true;
+  bool _deleting = false;
 
   final FocusNode _keyboardFocus = FocusNode(debugLabel: 'viewer-keyboard');
 
@@ -173,6 +212,91 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   void _previous() => _goTo(_index - 1);
   void _next() => _goTo(_index + 1);
+
+  /// Trashes the current file and drops it from the list, so Previous/Next
+  /// never try to load it again.
+  Future<void> _deleteCurrent() async {
+    if (_files.isEmpty || _deleting) return;
+
+    final path = _files[_index];
+    final name = path.split(Platform.pathSeparator).last;
+
+    if (_confirmDelete) {
+      final confirmed = await _askDeleteConfirmation(name);
+      // The dialog takes keyboard focus; reclaim it or the arrow keys go dead.
+      _keyboardFocus.requestFocus();
+      if (confirmed != true) return;
+    }
+
+    setState(() => _deleting = true);
+
+    try {
+      await moveToTrash(path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+        _error = 'Could not delete "$name": $e';
+      });
+      return;
+    }
+    if (!mounted) return;
+
+    final nextIndex =
+        indexAfterRemoval(length: _files.length, removedIndex: _index);
+    final remaining = List<String>.of(_files)..removeAt(_index);
+
+    if (nextIndex == null) {
+      // Nothing left. Bump the request id so any decode still in flight is
+      // discarded rather than painting over the empty state.
+      _requestId++;
+      setState(() {
+        _files = const [];
+        _index = 0;
+        _deleting = false;
+        _replaceImage(null);
+        _meta = null;
+        _focus = null;
+        _fileName = null;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _files = remaining;
+      _index = nextIndex;
+      _deleting = false;
+    });
+    _decodeFile(remaining[nextIndex]);
+  }
+
+  Future<bool?> _askDeleteConfirmation(String name) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Move to Trash?'),
+        content: Text(
+          '"$name" will be moved to the Trash.\n\n'
+          'You can restore it from your file manager.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFD32F2F),
+            ),
+            child: const Text('Move to Trash'),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// The AF area in decoded-image pixels, if this file recorded one.
   Rect? get _focusArea {
@@ -466,7 +590,68 @@ class _ViewerScreenState extends State<ViewerScreen> {
                         color: Colors.white54, fontSize: 12)),
               ],
             ),
+          // Delete controls sit at the far end, well away from Previous/Next,
+          // so a stray click while browsing cannot trash a frame.
+          if (_files.isNotEmpty) ...[
+            const SizedBox(width: 16),
+            _buildConfirmDeleteCheckbox(),
+            const SizedBox(width: 4),
+            ElevatedButton.icon(
+              onPressed: _deleting ? null : _deleteCurrent,
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Delete'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF7F1D1D),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFF3A2A2A),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildConfirmDeleteCheckbox() {
+    return Tooltip(
+      message: _confirmDelete
+          ? 'Ask before moving a file to the Trash'
+          : 'Delete immediately, without asking',
+      child: InkWell(
+        onTap: () => setState(() => _confirmDelete = !_confirmDelete),
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: Checkbox(
+                  value: _confirmDelete,
+                  onChanged: (v) =>
+                      setState(() => _confirmDelete = v ?? true),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  side: const BorderSide(color: Colors.white54, width: 1.5),
+                  fillColor: WidgetStateProperty.resolveWith((states) =>
+                      states.contains(WidgetState.selected)
+                          ? const Color(0xFF0A84FF)
+                          : Colors.transparent),
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                'Confirm delete',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
