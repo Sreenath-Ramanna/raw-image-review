@@ -36,7 +36,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
   RawMeta? _meta;
   String? _fileName;
   bool _loading = false;
+  bool _showingPreview = false;
   String? _error;
+
+  // Guards against a slow decode from an earlier file landing after the user
+  // has already opened a different one.
+  int _requestId = 0;
 
   // Zoom / pan state. _scale maps image pixels to logical screen pixels, so
   // 1.0 is exactly 1:1.
@@ -76,6 +81,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (fit != null) _setScale(fit);
   }
 
+  @override
+  void dispose() {
+    _image?.dispose();
+    super.dispose();
+  }
+
   Future<void> _browse() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -107,37 +118,78 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   Future<void> _decodeFile(String path) async {
+    final request = ++_requestId;
+
     setState(() {
       _loading = true;
       _error = null;
-      _image = null;
+      _replaceImage(null);
       _meta = null;
+      _showingPreview = false;
       _fileName = path.split(Platform.pathSeparator).last;
       _scale = 1.0;
       _offset = Offset.zero;
     });
 
+    // Start the full decode first so the preview runs alongside it rather than
+    // delaying it.
+    final fullDecode = RawDecoder.decode(path);
+
+    // The embedded preview is best-effort: not every file has one, and a
+    // failure here must not stop the real decode.
     try {
-      final decoded = await RawDecoder.decode(path);
-      if (!mounted) return;
+      final preview = await RawDecoder.decodePreview(path);
+      if (!mounted || request != _requestId) {
+        preview?.image.dispose();
+      } else if (preview != null && _image == null) {
+        setState(() {
+          _replaceImage(preview.image);
+          _meta = preview.meta;
+          _showingPreview = true;
+        });
+        _fitAfterLayout();
+      }
+    } catch (_) {
+      // Fall through to the full decode.
+    }
+
+    try {
+      final decoded = await fullDecode;
+      if (!mounted || request != _requestId) {
+        decoded.image.dispose();
+        return;
+      }
+      final hadPreview = _image != null;
       setState(() {
-        _image = decoded.image;
+        _replaceImage(decoded.image);
         _meta = decoded.meta;
+        _showingPreview = false;
         _loading = false;
       });
-
-      // The canvas has not been laid out with the new image yet, so its size
-      // is not measurable until after this frame. Fit once it has been.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _fitToWindow();
-      });
+      // Only fit if the preview never arrived; refitting here would throw away
+      // any zoom or pan the user had already applied to the preview.
+      if (!hadPreview) _fitAfterLayout();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || request != _requestId) return;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
     }
+  }
+
+  /// Swaps in [next], releasing the GPU memory held by the outgoing image.
+  void _replaceImage(ui.Image? next) {
+    _image?.dispose();
+    _image = next;
+  }
+
+  /// The canvas is not measurable until it has been laid out with the new
+  /// image, so fitting has to wait for the next frame.
+  void _fitAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fitToWindow();
+    });
   }
 
   @override
@@ -223,9 +275,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
           ],
           const Spacer(),
           if (_loading)
-            const Row(
+            Row(
               children: [
-                SizedBox(
+                const SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
@@ -233,9 +285,13 @@ class _ViewerScreenState extends State<ViewerScreen> {
                     color: Colors.white54,
                   ),
                 ),
-                SizedBox(width: 8),
-                Text('Decoding…',
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                const SizedBox(width: 8),
+                Text(
+                    _showingPreview
+                        ? 'Preview — decoding full image…'
+                        : 'Decoding…',
+                    style: const TextStyle(
+                        color: Colors.white54, fontSize: 12)),
               ],
             ),
         ],

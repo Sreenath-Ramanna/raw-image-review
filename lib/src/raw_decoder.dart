@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -56,16 +57,160 @@ class DecodedRawImage {
 // ── Decoder ───────────────────────────────────────────────────────────────
 
 class RawDecoder {
+  /// Overrides the .so location. Only for tests and tooling, which do not run
+  /// from the bundle layout that [_soPath] assumes.
+  static String? libraryPathOverride;
+
   // Resolve the .so path relative to the executable at runtime.
   static String get _soPath {
+    final override = libraryPathOverride;
+    if (override != null) return override;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     return '$exeDir/lib/libraw_wrapper.so';
   }
 
+  /// Decodes the camera's embedded preview — a near-full-resolution JPEG on
+  /// most bodies — in a fraction of the time a full demosaic takes.
+  ///
+  /// Returns null when the file carries no usable preview; callers should just
+  /// wait for [decode] in that case.
+  static Future<DecodedRawImage?> decodePreview(String filePath) async {
+    // See decode(): the path must be resolved before crossing into the isolate.
+    final soPath = _soPath;
+    final thumb = await Isolate.run(() => _thumbInIsolate(filePath, soPath));
+    if (thumb == null) return null;
+
+    ui.Image image;
+    if (thumb.format == _thumbJpeg) {
+      final codec = await ui.instantiateImageCodec(thumb.bytes);
+      final frame = await codec.getNextFrame();
+      image = frame.image;
+    } else {
+      // Uncompressed RGB — same conversion the full decode path uses.
+      final rgba = _rgbToRgba(thumb.bytes, thumb.width, thumb.height, 3);
+      image = await _imageFromRgba(rgba, thumb.width, thumb.height);
+    }
+
+    // The preview is stored unrotated. Flutter's JPEG decoder may or may not
+    // honour an embedded EXIF orientation tag, so rather than assume, check
+    // whether the decoded dimensions came back already transposed.
+    final alreadyRotated =
+        image.width == thumb.height && image.height == thumb.width;
+    if (!alreadyRotated) {
+      image = await _applyFlip(image, thumb.flip);
+    }
+
+    return DecodedRawImage(image: image, meta: thumb.meta);
+  }
+
+  /// Rotates [src] according to LibRaw's [flip] code so previews match the
+  /// orientation `dcraw_process` bakes into the full decode.
+  static Future<ui.Image> _applyFlip(ui.Image src, int flip) async {
+    // 0 = upright, 3 = 180°, 5 = 90° CCW, 6 = 90° CW. Anything else is left
+    // alone rather than guessed at.
+    if (flip != 3 && flip != 5 && flip != 6) return src;
+
+    final w = src.width.toDouble();
+    final h = src.height.toDouble();
+    final quarterTurn = flip == 5 || flip == 6;
+    final destW = quarterTurn ? src.height : src.width;
+    final destH = quarterTurn ? src.width : src.height;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+
+    switch (flip) {
+      case 3:
+        canvas.translate(w, h);
+        canvas.rotate(math.pi);
+      case 5:
+        canvas.translate(0, w);
+        canvas.rotate(-math.pi / 2);
+      case 6:
+        canvas.translate(h, 0);
+        canvas.rotate(math.pi / 2);
+    }
+
+    canvas.drawImage(src, ui.Offset.zero, ui.Paint());
+    final picture = recorder.endRecording();
+    final rotated = await picture.toImage(destW, destH);
+    picture.dispose();
+    src.dispose();
+    return rotated;
+  }
+
+  static Future<ui.Image> _imageFromRgba(
+      Uint8List bytes, int width, int height) {
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromPixels(
+      bytes,
+      width,
+      height,
+      ui.PixelFormat.rgba8888,
+      completer.complete,
+    );
+    return completer.future;
+  }
+
+  static Uint8List _rgbToRgba(
+      Uint8List src, int width, int height, int colors) {
+    final rgba = Uint8List(width * height * 4);
+    if (colors == 3) {
+      for (int i = 0, j = 0; i < width * height; i++, j += 3) {
+        rgba[i * 4] = src[j];
+        rgba[i * 4 + 1] = src[j + 1];
+        rgba[i * 4 + 2] = src[j + 2];
+        rgba[i * 4 + 3] = 255;
+      }
+    } else {
+      rgba.setAll(0, src);
+    }
+    return rgba;
+  }
+
+  // Runs inside the worker isolate.
+  static _ThumbResult? _thumbInIsolate(String filePath, String soPath) {
+    final bindings = LibRawBindings.open(soPath);
+    final pathPtr = filePath.toNativeUtf8();
+
+    final metaPtr = calloc<RawImageMetaNative>();
+    final metaRc = bindings.readMeta(pathPtr, metaPtr);
+    final meta = _parseMeta(metaPtr.ref);
+    calloc.free(metaPtr);
+
+    final thumbPtr = bindings.decodeThumb(pathPtr);
+    malloc.free(pathPtr);
+
+    if (metaRc != 0 || thumbPtr == nullptr) {
+      if (thumbPtr != nullptr) bindings.freeThumb(thumbPtr);
+      return null;
+    }
+
+    final t = thumbPtr.ref;
+    // Copy before freeing: the typed list is a view onto native memory.
+    final bytes = Uint8List.fromList(t.data.asTypedList(t.dataSize));
+    final result = _ThumbResult(
+      bytes: bytes,
+      format: t.format,
+      width: t.width,
+      height: t.height,
+      flip: t.flip,
+      meta: meta,
+    );
+
+    bindings.freeThumb(thumbPtr);
+    return result;
+  }
+
   /// Decode [filePath] off the main isolate, returning a [DecodedRawImage].
   static Future<DecodedRawImage> decode(String filePath) async {
+    // Resolve the library path here: statics are not shared across isolates,
+    // so the worker would not see libraryPathOverride. Capturing it in the
+    // closure copies it across.
+    final soPath = _soPath;
     // Run the blocking decode in a separate isolate.
-    final pixelData = await Isolate.run(() => _decodeInIsolate(filePath));
+    final pixelData =
+        await Isolate.run(() => _decodeInIsolate(filePath, soPath));
 
     // Build a ui.Image back on the main isolate (required by Flutter).
     final completer = Completer<ui.Image>();
@@ -82,8 +227,8 @@ class RawDecoder {
   }
 
   // Runs inside the worker isolate — no Flutter framework calls allowed here.
-  static _IsolateResult _decodeInIsolate(String filePath) {
-    final bindings = LibRawBindings.open(_soPath);
+  static _IsolateResult _decodeInIsolate(String filePath, String soPath) {
+    final bindings = LibRawBindings.open(soPath);
 
     final pathPtr = filePath.toNativeUtf8();
 
@@ -150,7 +295,27 @@ class RawDecoder {
   }
 }
 
-// ── Internal isolate transfer object ─────────────────────────────────────
+// ── Internal isolate transfer objects ────────────────────────────────────
+
+const int _thumbJpeg = 1;
+
+class _ThumbResult {
+  final Uint8List bytes;
+  final int format;
+  final int width;
+  final int height;
+  final int flip;
+  final RawMeta meta;
+  const _ThumbResult({
+    required this.bytes,
+    required this.format,
+    required this.width,
+    required this.height,
+    required this.flip,
+    required this.meta,
+  });
+}
+
 
 class _IsolateResult {
   final Uint8List bytes;

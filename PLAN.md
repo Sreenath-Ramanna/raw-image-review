@@ -53,8 +53,10 @@ Last updated: 2026-08-26
   either wire it up or reject it explicitly).
 - [ ] **2.3 Surface LibRaw's error string** — the wrapper returns `NULL` for every failure, so the UI
   can only say "failed to decode". Return the LibRaw error code and map it via `libraw_strerror`.
-- [ ] **2.4 Free `ui.Image` on reload** — `_decodeFile` drops the old `ui.Image` without `dispose()`,
-  leaking GPU memory on every open.
+- [x] **2.4 Free `ui.Image` on reload** — done 2026-08-26 alongside 3.1, which made it urgent:
+  each open now produces two images rather than one. All swaps go through `_replaceImage()`,
+  which disposes the outgoing image; `State.dispose()` releases the last one. Images belonging
+  to a superseded request are disposed rather than shown, guarded by `_requestId`.
 - [ ] **2.5 Audit the isolate FFI path** — `DynamicLibrary.open` runs per decode; confirm that's
   intended (it is cheap, but worth a comment) and that `pathPtr` is freed on every exit path.
 - [x] **2.6 Test with real RAW files** — done 2026-08-26 against `test-images/` (13 files:
@@ -88,10 +90,28 @@ Last updated: 2026-08-26
 
 ## Phase 3 — Make it usable
 
-- [ ] **3.1 Fast preview path** — decode the embedded JPEG thumbnail (`libraw_dcraw_thumb`) first for
-  instant display, then swap in the full decode. **Measured 2.1–3.5 s per file** on this machine
-  (Z 6_2 24MP ≈ 2.2 s, R7 33MP ≈ 2.8 s), so this is the single biggest usability win available.
-  Metadata alone is 1–5 ms, so the EXIF panel can populate essentially instantly.
+- [x] **3.1 Fast preview path** — done 2026-08-26. `raw_decode_thumb` in the wrapper pulls the
+  embedded preview; Flutter decodes the JPEG natively, so no libjpeg dependency was needed.
+  Measured on the test images:
+
+  | file | preview | full decode | speedup |
+  |---|---|---|---|
+  | DSC_1436.NEF | 6048×4024, 480 ms | 6064×4040, 3431 ms | 7.1× |
+  | DSC_1441.NEF (portrait) | 4024×6048, 1047 ms | 4040×6064, 3917 ms | 3.7× |
+  | 20250803_A0A8111.CR3 | 6960×4640, 565 ms | 6984×4660, 3785 ms | 6.7× |
+
+  The preview is ~99.7% of full resolution on both bodies, not a small thumbnail.
+  **Orientation was the trap:** previews are stored unrotated (DSC_1441 is `flip=5` but its
+  preview is a landscape 6048×4024 JPEG), while `dcraw_process` bakes rotation into the full
+  decode — so a naive blit showed portrait shots sideways. `_applyFlip` handles 3/5/6, guarded
+  by a runtime check for whether Flutter's codec already applied EXIF orientation.
+  Pinned by `test/preview_orientation_test.dart`.
+  Smaller previews (1620×1080, 640×424) are also embedded if a sub-50 ms first paint is ever
+  wanted — `libraw_data_t.thumbs_list` enumerates them.
+- [x] **3.1a Isolate statics do not cross isolates** — found while testing 3.1.
+  `RawDecoder.libraryPathOverride` was invisible inside `Isolate.run`, which silently fell back
+  to the bundle path. The `.so` path is now resolved on the main isolate and captured into the
+  closure. This also affects any future static config touched by isolate code.
 - [x] **3.2 Fit-to-window *on load*** — done 2026-08-26. Applied via `addPostFrameCallback` after
   the decode completes. The canvas cannot be measured at that moment: `_canvasKey` is attached to
   a widget that only exists once `_image != null`, so `_canvasSize` is still null when `setState`
