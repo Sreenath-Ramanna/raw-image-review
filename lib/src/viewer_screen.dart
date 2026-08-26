@@ -383,12 +383,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.2)),
           const Divider(color: Colors.white12),
-          _metaRow('Camera', '${meta.make} ${meta.model}'),
-          _metaRow('Resolution', '${meta.width} × ${meta.height}'),
-          _metaRow('ISO', meta.isoSpeed.toInt().toString()),
+          _metaRow('Camera', meta.cameraDisplay),
+          _metaRow('Resolution', meta.resolutionDisplay),
+          _metaRow('ISO', meta.isoDisplay),
           _metaRow('Shutter', meta.shutterDisplay),
           _metaRow('Aperture', meta.apertureDisplay),
-          _metaRow('Focal length', '${meta.focalLen.toStringAsFixed(1)} mm'),
+          _metaRow('Focal length', meta.focalLenDisplay),
           const Spacer(),
           if (_image != null)
             Text(

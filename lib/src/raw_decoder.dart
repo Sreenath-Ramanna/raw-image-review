@@ -45,13 +45,41 @@ class RawMeta {
     required this.flip,
   });
 
+  /// Shown when a value is missing or nonsensical.
+  static const String unknown = '—';
+
+  /// True for values LibRaw could not determine. It zero-fills the struct on a
+  /// failed read, and these fields are never legitimately zero or negative on a
+  /// real exposure.
+  static bool _usable(double v) => v.isFinite && v > 0;
+
   String get shutterDisplay {
+    // Guard before dividing: 1/0 is Infinity and Infinity.round() throws
+    // UnsupportedError, so an unreadable file would crash the panel rather
+    // than just display oddly.
+    if (!_usable(shutter)) return unknown;
     if (shutter >= 1) return '${shutter.toStringAsFixed(0)}s';
     final denom = (1 / shutter).round();
     return '1/${denom}s';
   }
 
-  String get apertureDisplay => 'f/${aperture.toStringAsFixed(1)}';
+  String get apertureDisplay =>
+      _usable(aperture) ? 'f/${aperture.toStringAsFixed(1)}' : unknown;
+
+  /// `.round()` throws on Infinity and NaN just as it does above.
+  String get isoDisplay =>
+      _usable(isoSpeed) ? isoSpeed.round().toString() : unknown;
+
+  String get focalLenDisplay =>
+      _usable(focalLen) ? '${focalLen.toStringAsFixed(1)} mm' : unknown;
+
+  String get cameraDisplay {
+    final name = '$make $model'.trim();
+    return name.isEmpty ? unknown : name;
+  }
+
+  String get resolutionDisplay =>
+      (width > 0 && height > 0) ? '$width × $height' : unknown;
 }
 
 class DecodedRawImage {

@@ -134,6 +134,17 @@ Last updated: 2026-08-26
 - [ ] **3.5 Command-line argument** — `raw_viewer photo.cr2` should open that file.
 - [ ] **3.6 Export to JPEG/PNG** from the decoded buffer.
 
+- [x] **2.10 EXIF panel crashed on unreadable metadata** — FIXED 2026-08-26.
+  `shutterDisplay` computed `(1 / shutter).round()`, and `1 / 0` is `Infinity`, whose `.round()`
+  throws `UnsupportedError` — so this took the panel down rather than merely displaying oddly
+  (verified: both it and the ISO row's `.toInt()` throw). LibRaw zero-fills the meta struct on a
+  failed read, which is exactly when this fires.
+  All formatting now lives on `RawMeta` behind a shared `_usable()` guard rejecting zero,
+  negative, NaN and Infinity, falling back to `RawMeta.unknown` ("—"): `shutterDisplay`,
+  `apertureDisplay`, `isoDisplay`, `focalLenDisplay`, `cameraDisplay`, `resolutionDisplay`.
+  The panel had been doing its own formatting inline, which is how ISO and focal length ended up
+  with the same latent crash. Covered by `test/raw_meta_test.dart`.
+
 ## Phase 4 — Polish and durability
 
 - [x] **4.1 `git init` + first commit** — done 2026-08-26, commit `b2c94d0`. Identity is set
