@@ -56,11 +56,15 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 
 | Control | Effect |
 |---|---|
-| **Open RAW** | File picker, filtered to RAW extensions |
+| **Open Folder** | Loads every RAW in the folder and shows the first |
+| **← / →**, or Previous / Next | Move through the folder |
 | **Fit to window** | Scales so the whole frame is visible |
 | **1:1** | Actual size, one image pixel per screen pixel |
 | **Zoom in / out** | 1.25× steps |
 | Drag on the image | Pan |
+
+The folder scan is not recursive, matches extensions case-insensitively, and
+sorts by name. The toolbar shows the position in the folder, e.g. `3 / 13`.
 
 Files open fitted to the window. The EXIF panel shows the file name, camera,
 resolution, ISO, shutter, aperture and focal length; anything the file does not

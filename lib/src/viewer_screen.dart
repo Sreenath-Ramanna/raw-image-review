@@ -2,14 +2,48 @@
 //
 // Main application screen: browse button, image canvas, metadata panel.
 
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, File, Platform;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'raw_decoder.dart';
+
+/// Extensions treated as camera RAW when scanning a folder. Matched
+/// case-insensitively — cameras commonly write .NEF and .CR3 in upper case.
+const Set<String> kRawExtensions = {
+  'cr2', 'cr3', // Canon
+  'nef', // Nikon
+  'arw', // Sony
+  'raf', // Fujifilm
+  'dng', // Adobe
+  'orf', // Olympus
+  'pef', // Pentax
+  'rw2', // Panasonic
+  'raw', // generic
+};
+
+/// Every RAW file directly inside [dir], sorted by name.
+///
+/// Not recursive: a shoot folder is the unit people browse, and descending
+/// into subfolders would mix unrelated sets together.
+List<String> rawFilesIn(Directory dir) {
+  final files = <String>[];
+  for (final entity in dir.listSync(followLinks: false)) {
+    if (entity is! File) continue;
+    final name = entity.path.split(Platform.pathSeparator).last;
+    final dot = name.lastIndexOf('.');
+    if (dot < 0) continue;
+    if (kRawExtensions.contains(name.substring(dot + 1).toLowerCase())) {
+      files.add(entity.path);
+    }
+  }
+  files.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  return files;
+}
 
 /// Scale that makes [image] fit entirely within [canvas] — both width and
 /// height end up no larger than the viewing area. Limited by the tighter of
@@ -42,6 +76,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
   // Guards against a slow decode from an earlier file landing after the user
   // has already opened a different one.
   int _requestId = 0;
+
+  // The RAW files in the opened folder, and where we are in them.
+  List<String> _files = const [];
+  int _index = 0;
+
+  final FocusNode _keyboardFocus = FocusNode(debugLabel: 'viewer-keyboard');
 
   // Zoom / pan state. _scale maps image pixels to logical screen pixels, so
   // 1.0 is exactly 1:1.
@@ -84,37 +124,68 @@ class _ViewerScreenState extends State<ViewerScreen> {
   @override
   void dispose() {
     _image?.dispose();
+    _keyboardFocus.dispose();
     super.dispose();
   }
 
-  Future<void> _browse() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: [
-        // Canon
-        'cr2', 'cr3',
-        // Nikon
-        'nef',
-        // Sony
-        'arw',
-        // Fujifilm
-        'raf',
-        // Adobe
-        'dng',
-        // Olympus
-        'orf',
-        // Pentax
-        'pef',
-        // Panasonic
-        'rw2',
-        // Generic
-        'raw',
-      ],
-      dialogTitle: 'Open Camera RAW File',
+  Future<void> _openFolder() async {
+    final picked = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Open Folder of RAW Images',
     );
+    // The picker takes keyboard focus; take it back so the arrow keys keep
+    // working without the user having to click the window first.
+    _keyboardFocus.requestFocus();
+    if (picked == null) return;
 
-    if (result == null || result.files.single.path == null) return;
-    _decodeFile(result.files.single.path!);
+    final files = rawFilesIn(Directory(picked));
+    final folder = picked.split(Platform.pathSeparator).last;
+
+    if (files.isEmpty) {
+      setState(() {
+        _files = const [];
+        _index = 0;
+        _replaceImage(null);
+        _meta = null;
+        _fileName = null;
+        _loading = false;
+        _error = 'No RAW files in "$folder".';
+      });
+      return;
+    }
+
+    setState(() {
+      _files = files;
+      _index = 0;
+    });
+    _decodeFile(files.first);
+  }
+
+  bool get _hasPrevious => _index > 0;
+  bool get _hasNext => _index < _files.length - 1;
+
+  void _goTo(int index) {
+    if (index < 0 || index >= _files.length || index == _index) return;
+    setState(() => _index = index);
+    _decodeFile(_files[index]);
+  }
+
+  void _previous() => _goTo(_index - 1);
+  void _next() => _goTo(_index + 1);
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    // KeyDownEvent only: honouring auto-repeat would queue a multi-second
+    // decode per repeat while a key is held.
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      _next();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      _previous();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _decodeFile(String path) async {
@@ -199,6 +270,15 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return Focus(
+      focusNode: _keyboardFocus,
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: _buildScaffold(),
+    );
+  }
+
+  Widget _buildScaffold() {
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A1A),
       body: Column(
@@ -234,9 +314,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
           ),
           const SizedBox(width: 16),
           ElevatedButton.icon(
-            onPressed: _loading ? null : _browse,
+            onPressed: _openFolder,
             icon: const Icon(Icons.folder_open, size: 18),
-            label: const Text('Open RAW'),
+            label: const Text('Open Folder'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF0A84FF),
               foregroundColor: Colors.white,
@@ -245,6 +325,23 @@ class _ViewerScreenState extends State<ViewerScreen> {
             ),
           ),
           const SizedBox(width: 8),
+          if (_files.isNotEmpty) ...[
+            IconButton(
+              tooltip: 'Previous  (←)',
+              icon: const Icon(Icons.chevron_left, color: Colors.white70),
+              onPressed: _hasPrevious ? _previous : null,
+            ),
+            IconButton(
+              tooltip: 'Next  (→)',
+              icon: const Icon(Icons.chevron_right, color: Colors.white70),
+              onPressed: _hasNext ? _next : null,
+            ),
+            Text(
+              '${_index + 1} / ${_files.length}',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(width: 8),
+          ],
           if (_image != null) ...[
             IconButton(
               tooltip: 'Zoom in',
@@ -323,8 +420,13 @@ class _ViewerScreenState extends State<ViewerScreen> {
             Icon(Icons.camera_roll, size: 64, color: Colors.white24),
             SizedBox(height: 16),
             Text(
-              'Open a RAW file to begin',
+              'Open a folder of RAW images to begin',
               style: TextStyle(color: Colors.white38, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Use ← and → to move between images',
+              style: TextStyle(color: Colors.white24, fontSize: 12),
             ),
           ],
         ),

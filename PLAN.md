@@ -130,7 +130,15 @@ Last updated: 2026-08-26
 - [x] **3.7 Show the file name** — base name only, above the EXIF block, ellipsised with a
   tooltip carrying the full name.
 - [ ] **3.3 Scroll-wheel zoom** centred on the cursor, and clamp panning to the image bounds.
-- [ ] **3.4 Directory browsing** — arrow keys / filmstrip to move between RAWs in the same folder.
+- [x] **3.4 Directory browsing** — done 2026-08-26. "Open RAW" became "Open Folder": it scans the
+  chosen folder for RAW files, sorts by name, and opens the first. Previous/Next buttons plus
+  ← / → keys move through the list, with a "3 / 13" position readout.
+  Notes: extension matching is case-insensitive, since cameras write `.NEF` and `.CR3` upper case
+  and a naive match would find nothing. The scan is deliberately non-recursive — a shoot folder is
+  the unit people browse. Keyboard handling takes `KeyDownEvent` only; honouring auto-repeat would
+  queue a multi-second decode per repeat while a key is held. Focus is explicitly reclaimed after
+  the picker closes, otherwise the arrow keys are dead until the user clicks the window.
+  Covered by `test/raw_files_in_test.dart`.
 - [ ] **3.5 Command-line argument** — `raw_viewer photo.cr2` should open that file.
 - [ ] **3.6 Export to JPEG/PNG** from the decoded buffer.
 

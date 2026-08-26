@@ -291,6 +291,24 @@ Scale is clamped to 0.01–20.0. The floor matters: a 6984 px image in a 1146 px
 canvas fits at ~0.16, so the original 0.1 floor would have refused to fit in a
 smaller window.
 
+### Folder navigation
+
+`rawFilesIn(Directory)` is a free function for the same reason `fitScaleFor` is:
+it can be tested without a widget tree. It matches extensions
+case-insensitively — cameras write `.NEF` and `.CR3` in upper case, so a naive
+lowercase comparison finds nothing — and does not recurse, because a shoot
+folder is the unit people browse.
+
+Keyboard handling sits in a `Focus` wrapping the whole `Scaffold`, taking
+`KeyDownEvent` only. Honouring auto-repeat would queue a multi-second decode for
+every repeat while an arrow key is held. Focus is explicitly reclaimed after the
+directory picker closes, since the picker takes it and the arrow keys would
+otherwise be dead until the user clicked the window.
+
+Rapid navigation is safe rather than optimal: several decodes may be in flight
+at once, and `_requestId` ensures only the newest is displayed while the rest
+are disposed on arrival.
+
 ### Loading sequence
 
 ```
