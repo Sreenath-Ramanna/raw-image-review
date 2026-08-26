@@ -8,14 +8,19 @@ Last updated: 2026-08-26
 
 ---
 
-## Phase 1 — Make it build (goal: `flutter build linux` succeeds)
+## Phase 1 — Make it build (goal: `flutter build linux` succeeds) ✅ COMPLETE
 
 - [!] **1.1 Install system dependencies** — `libraw-devel`, `gtk3-devel`, `cmake`, `ninja-build`, `clang`, `pkg-config`.
-  **BLOCKED: needs sudo (password required), so the user must run it:**
+  **BLOCKED: needs sudo, and sudo cannot prompt for a password without a TTY — run it in a
+  normal terminal, not through Claude Code:**
   ```
-  sudo dnf install -y libraw-devel cmake ninja-build gtk3-devel clang pkg-config
+  sudo dnf install -y LibRaw-devel cmake ninja-build gtk3-devel clang pkgconf-pkg-config
   ```
-  Verify with `pkg-config --modversion libraw`. As of 2026-08-26 *none* of these are installed.
+  Fedora package-name gotchas (all confirmed against F44 repos on 2026-08-26):
+  `LibRaw-devel` is capitalised — `libraw-devel` does not exist, and `libraw1394-devel` is a
+  FireWire library, not this. `pkg-config` is only a virtual provide; the package is
+  `pkgconf-pkg-config`, and it is already installed here. Fedora ships LibRaw 0.22.2.
+  Verify with `pkg-config --modversion libraw`. As of 2026-08-26 none of the others are installed.
 - [x] **1.2 Generate the Flutter Linux scaffold** — done via `flutter create --platforms=linux .`.
   Created `linux/runner/{main.cc,my_application.cc,my_application.h}`, `linux/flutter/`,
   `.metadata`, `analysis_options.yaml`, `test/`, `README.md`.
@@ -28,7 +33,11 @@ Last updated: 2026-08-26
 - [x] **1.4 Remove the duplicate `src/CMakeLists.txt`** — deleted.
 - [x] **1.5 `flutter pub get`** — resolved. Added `flutter_lints` (the generated
   `analysis_options.yaml` includes it but it was not in `dev_dependencies`).
-- [!] **1.6 `flutter build linux`** — **BLOCKED on 1.1.**
+- [x] **1.6 `flutter build linux`** — **succeeds** (2026-08-26). Verified in
+  `build/linux/x64/debug/bundle/`: the `raw_viewer` binary is present, `lib/libraw_wrapper.so`
+  is installed alongside it, exports all three symbols (`raw_decode_file`, `raw_read_meta`,
+  `raw_free_result`), and links `libraw.so.25`. `_soPath` resolves to exactly this location.
+  The C wrapper also compiles clean under `-Wall -Wextra` against LibRaw 0.22.2 — no API drift.
 - [x] **1.7 `flutter analyze`** — clean, 0 issues.
 - [x] **1.8 Fix a compile error the code had never hit** — `Colors.white87` does not exist in Flutter
   (`viewer_screen.dart:262`); replaced with `Color(0xDEFFFFFF)`. Proof the Dart had never been built.
@@ -63,7 +72,8 @@ Last updated: 2026-08-26
 
 ## Phase 4 — Polish and durability
 
-- [ ] **4.1 `git init` + first commit** — no version control today; this is why context was lost.
+- [x] **4.1 `git init` + first commit** — done 2026-08-26, commit `b2c94d0`. Identity is set
+  repo-locally (`sreenath.ramanna <sreenath.kr32@gmail.com>`), not globally.
 - [ ] **4.2 README** — what it is, dependencies, build steps, supported formats.
 - [ ] **4.3 Tests** — unit-test `RawMeta.shutterDisplay` / `apertureDisplay` edge cases
   (`shutter == 0` currently divides by zero), plus an FFI smoke test.
