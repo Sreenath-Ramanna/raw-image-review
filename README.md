@@ -36,12 +36,16 @@ sudo apt-get install -y libraw-dev cmake ninja-build libgtk-3-dev clang pkg-conf
 ## Build and run
 
 ```bash
-./scripts/setup.sh          # dependencies, once
-flutter run -d linux        # or: flutter build linux
+./scripts/setup.sh              # dependencies, once
+flutter run -d linux            # development
+flutter build linux --release   # for actual use
 ```
 
 The built bundle lands in `build/linux/x64/{debug,release}/bundle/`, with
 `libraw_wrapper.so` in its `lib/` subdirectory next to the executable.
+
+Use `--release` for real work: the bundle is **48 MB instead of 147 MB** and
+starts faster. Decode speed is barely affected — see below.
 
 ## Supported formats
 
@@ -98,12 +102,42 @@ Full decode is the slow part, and it dominates regardless of file size:
 
 | File | Preview | Full decode |
 |---|---|---|
-| Nikon Z 6_2 NEF (24 MP) | ~480 ms | ~3.4 s |
-| Canon EOS R7 CR3 (33 MP) | ~570 ms | ~3.8 s |
+| Nikon Z 6_2 NEF (24 MP) | ~480 ms | ~2.5 s |
+| Canon EOS R7 CR3 (33 MP) | ~570 ms | ~2.8 s |
 
 Metadata alone takes 1–5 ms, so the EXIF panel fills in immediately. The
 embedded preview is roughly 99.7% of full resolution on both bodies, so the
 first paint is near-full quality rather than a placeholder.
+
+### Debug vs release
+
+Measured with `tool/bench.dart`, mean over three files, best of three passes:
+
+| | debug | release |
+|---|---|---|
+| LibRaw decode (C) | 2498 ms | 2574 ms |
+| RGB→RGBA (Dart) | 225 ms | 145 ms |
+| **total** | **2724 ms** | **2719 ms** |
+| bundle size | 147 MB | 48 MB |
+
+The Dart conversion loop is genuinely ~1.55× faster AOT-compiled, but it is only
+about 8% of the work, so end-to-end decode is unchanged. The C decode does not
+improve either: `libraw_wrapper.c` is a thin shim and all the real work happens
+inside the distribution's prebuilt `libraw.so`, which is the same binary in both
+builds — so `-O3` on ~230 lines of glue buys nothing. The difference between
+the two runs above is run-to-run noise, confirmed by timing both `.so` files
+from a pure-C harness.
+
+Release is still the right choice for use — a third of the size and a faster
+start — just not for decode throughput.
+
+To reproduce:
+
+```bash
+dart run tool/bench.dart build/linux/x64/debug/bundle/lib/libraw_wrapper.so test-images/*.NEF
+dart compile exe tool/bench.dart -o /tmp/bench
+/tmp/bench build/linux/x64/release/bundle/lib/libraw_wrapper.so test-images/*.NEF
+```
 
 ## Layout
 
@@ -116,6 +150,7 @@ lib/src/viewer_screen.dart    toolbar, image canvas, EXIF panel
 lib/main.dart                 app entry point
 linux/CMakeLists.txt          Flutter runner plus the raw_wrapper target
 tool/ffi_check.dart           drives the .so through the real bindings, no UI
+tool/bench.dart               times the C decode and the Dart conversion separately
 scripts/setup.sh              dependency installation
 ```
 

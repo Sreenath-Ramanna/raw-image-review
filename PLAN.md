@@ -258,6 +258,28 @@ focused — the view a photographer actually wants first, to check critical shar
 
 ---
 
+## Phase 7 — Build configuration
+
+- [x] **7.1 Produce a release build** — done 2026-08-27. Everything up to this point had been
+  `--debug`; `build/linux/x64/` contained only `debug/`. Release compiles clean, no `-Werror`
+  or optimisation issues in the wrapper.
+- [x] **7.2 Measure debug vs release properly** — done, with `tool/bench.dart` timing the C decode
+  and the Dart conversion loop separately, run both JIT and AOT.
+  **Result: end-to-end decode is unchanged** (2724 ms debug vs 2719 ms release, mean over three
+  files). The Dart RGB→RGBA loop *is* ~1.55× faster AOT (225 → 145 ms), but it is only ~8% of the
+  work. The C decode does not improve at all — `libraw_wrapper.c` is a thin shim and the real work
+  is inside the distribution's prebuilt `libraw.so`, identical in both builds, so `-O3` on ~230
+  lines of glue buys nothing. Confirmed by timing both `.so` files from a pure-C harness.
+  Release is still worth using: **48 MB vs 147 MB** and a faster start.
+  This corrected an earlier assumption that release would meaningfully speed up decoding.
+- [x] **7.3 Document it** — README gained a debug-vs-release table with reproduction steps and now
+  recommends `--release` for real use; DESIGN.md records why `-O3` on the wrapper is irrelevant.
+- [ ] **7.4 Measure the preview path in release** — the ~480/570 ms preview figures are still JIT
+  measurements from `test/preview_orientation_test.dart`. Most of that time is JPEG decoding inside
+  Skia rather than Dart, so it is unlikely to move, but it has not been measured.
+
+---
+
 ## Notes / decisions
 
 - LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and

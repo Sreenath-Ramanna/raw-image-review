@@ -88,8 +88,12 @@ Full decode: `libraw_open_file` → `libraw_unpack` → `libraw_dcraw_process` �
 `libraw_dcraw_make_mem_image`. Returns 8-bit RGB at full resolution with the
 camera white balance applied, or `NULL` on any failure.
 
-**Costs 2–4 seconds** for a 24–33 MP frame. This is inherent to demosaicing, not
-overhead that can be tuned away.
+**Costs ~2.5 s** for a 24–33 MP frame. This is inherent to demosaicing, not
+overhead that can be tuned away — and notably it is the *same* in debug and
+release builds. All the work happens inside the distribution's prebuilt
+`libraw.so`; `libraw_wrapper.c` is a shim, so compiling it `-O3` changes
+nothing measurable. Verified by timing both built `.so` files from a pure-C
+harness. See the README's debug-vs-release table.
 
 Processing parameters are fixed: `use_camera_wb = 1`, `output_bps = 8`,
 `half_size = 0`, `no_auto_bright = 0`.
@@ -143,6 +147,11 @@ Free the buffer and the struct. Both tolerate `NULL`.
 `/tmp/leak_probe.c` (not in the repo) cycles decode+preview while sampling
 `VmRSS`. Last run: flat at 12 MB across six passes of a 33 MP CR3, each
 allocating ~98 MB. Worth re-running after touching allocation paths.
+
+`tool/bench.dart` times the C decode and the Dart RGB→RGBA loop separately, and
+can be run JIT or AOT-compiled to compare debug against release behaviour. Note
+that `dart run` disables asserts, so the usual assert-based JIT probe mislabels
+the runtime — the tool reads `dart.vm.product` instead.
 
 ---
 
