@@ -13,7 +13,10 @@ import 'dart:ui' as ui;
 
 import 'package:ffi/ffi.dart';
 
+import 'focus_point.dart';
 import 'libraw_bindings.dart';
+
+export 'focus_point.dart' show FocusPoint, FocusArea;
 
 // ── Public data classes ───────────────────────────────────────────────────
 
@@ -86,7 +89,15 @@ class DecodedRawImage {
   final ui.Image image;
   final RawMeta meta;
 
-  const DecodedRawImage({required this.image, required this.meta});
+  /// Null when the file records no usable AF data — manual focus, adapted
+  /// lenses, or an unsupported body.
+  final FocusPoint? focus;
+
+  const DecodedRawImage({
+    required this.image,
+    required this.meta,
+    this.focus,
+  });
 }
 
 // ── Decoder ───────────────────────────────────────────────────────────────
@@ -135,7 +146,7 @@ class RawDecoder {
       image = await _applyFlip(image, thumb.flip);
     }
 
-    return DecodedRawImage(image: image, meta: thumb.meta);
+    return DecodedRawImage(image: image, meta: thumb.meta, focus: thumb.focus);
   }
 
   /// Rotates [src] according to LibRaw's [flip] code so previews match the
@@ -213,6 +224,8 @@ class RawDecoder {
     final meta = _parseMeta(metaPtr.ref);
     calloc.free(metaPtr);
 
+    final focus = _readFocus(bindings, pathPtr);
+
     final thumbPtr = bindings.decodeThumb(pathPtr);
     malloc.free(pathPtr);
 
@@ -231,6 +244,7 @@ class RawDecoder {
       height: t.height,
       flip: t.flip,
       meta: meta,
+      focus: focus,
     );
 
     bindings.freeThumb(thumbPtr);
@@ -258,7 +272,8 @@ class RawDecoder {
     );
     final image = await completer.future;
 
-    return DecodedRawImage(image: image, meta: pixelData.meta);
+    return DecodedRawImage(
+        image: image, meta: pixelData.meta, focus: pixelData.focus);
   }
 
   // Runs inside the worker isolate — no Flutter framework calls allowed here.
@@ -272,6 +287,8 @@ class RawDecoder {
     bindings.readMeta(pathPtr, metaPtr);
     final meta = _parseMeta(metaPtr.ref);
     calloc.free(metaPtr);
+
+    final focus = _readFocus(bindings, pathPtr);
 
     // ── Decode pixels ────────────────────────────────────────────────────
     final resultPtr = bindings.decodeFile(pathPtr);
@@ -303,7 +320,32 @@ class RawDecoder {
 
     bindings.freeResult(resultPtr);
 
-    return _IsolateResult(bytes: rgba, width: w, height: h, meta: meta);
+    return _IsolateResult(
+        bytes: rgba, width: w, height: h, meta: meta, focus: focus);
+  }
+
+  /// Reads AF data inside a worker isolate. Cheap — `libraw_open_file` parses
+  /// MakerNotes, so no unpack is needed. Returns null when absent or unusable.
+  static FocusPoint? _readFocus(LibRawBindings bindings, Pointer<Utf8> pathPtr) {
+    final ptr = calloc<RawFocusPointNative>();
+    try {
+      final rc = bindings.readFocus(pathPtr, ptr);
+      final f = ptr.ref;
+      if (rc != 0 || f.valid == 0) return null;
+      return FocusPoint(
+        vendor: f.vendor,
+        rawX: f.x,
+        rawY: f.y,
+        areaWidth: f.width,
+        areaHeight: f.height,
+        afImageWidth: f.afImageWidth,
+        afImageHeight: f.afImageHeight,
+        flip: f.flip,
+        pointsInFocus: f.pointsInFocus,
+      );
+    } finally {
+      calloc.free(ptr);
+    }
   }
 
   static RawMeta _parseMeta(RawImageMetaNative m) {
@@ -342,6 +384,7 @@ class _ThumbResult {
   final int height;
   final int flip;
   final RawMeta meta;
+  final FocusPoint? focus;
   const _ThumbResult({
     required this.bytes,
     required this.format,
@@ -349,6 +392,7 @@ class _ThumbResult {
     required this.height,
     required this.flip,
     required this.meta,
+    required this.focus,
   });
 }
 
@@ -358,9 +402,11 @@ class _IsolateResult {
   final int width;
   final int height;
   final RawMeta meta;
+  final FocusPoint? focus;
   const _IsolateResult(
       {required this.bytes,
       required this.width,
       required this.height,
-      required this.meta});
+      required this.meta,
+      required this.focus});
 }

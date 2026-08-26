@@ -52,6 +52,136 @@ typedef struct {
     int   flip;          /* 0 none, 3 = 180, 5 = 90 CCW, 6 = 90 CW          */
 } RawImageMeta;
 
+/* ── Autofocus point returned to Dart ───────────────────────────────────── */
+
+#define RAW_AF_VENDOR_NONE  0
+#define RAW_AF_VENDOR_CANON 1
+#define RAW_AF_VENDOR_NIKON 2
+
+/* Deliberately returns the vendor's *raw* values rather than a resolved
+ * pixel position. Canon and Nikon disagree on origin and sign, and the Canon
+ * Y direction is still unconfirmed — so the interpretation lives in Dart where
+ * it is unit-testable and can be changed without rebuilding this library.
+ * See FOCUS_POINTS.md. */
+typedef struct {
+    int vendor;           /* RAW_AF_VENDOR_*                                 */
+    int valid;            /* 1 if x/y hold a usable focus point              */
+    int x, y;             /* raw, in the vendor's own coordinate system      */
+    int width, height;    /* AF area size, in AF-image space                 */
+    int af_image_width;   /* the space x/y/width/height are measured against */
+    int af_image_height;
+    int flip;             /* orientation; AF coords are recorded unrotated   */
+    int points_in_focus;  /* how many points reported focus (Canon)          */
+} RawFocusPoint;
+
+static unsigned short af_u16(const unsigned char* p) {
+    return (unsigned short)(p[0] | (p[1] << 8));
+}
+
+static short af_s16(const unsigned char* p) {
+    return (short)(p[0] | (p[1] << 8));
+}
+
+/* Canon AFInfo2 (MakerNote 0x0026): a flat int16 array. Fixed header, then
+ * four NumAFPoints-long arrays, then bitmasks flagging which points focused. */
+static void parse_canon_af(const unsigned char* d, unsigned len,
+                           RawFocusPoint* out) {
+    if (len < 16) return;
+
+    unsigned num = af_u16(d + 4);
+    out->af_image_width  = af_u16(d + 12);
+    out->af_image_height = af_u16(d + 14);
+    if (num == 0) return;
+
+    unsigned need = 16 + num * 8;              /* widths+heights+xs+ys */
+    unsigned mask_words = (num + 15) / 16;
+    if (need + mask_words * 2 > len) return;
+
+    const unsigned char* widths   = d + 16;
+    const unsigned char* heights  = widths + num * 2;
+    const unsigned char* xs       = heights + num * 2;
+    const unsigned char* ys       = xs + num * 2;
+    const unsigned char* in_focus = ys + num * 2;
+
+    /* Average the points that reported focus. With subject tracking there is
+     * usually exactly one; averaging keeps a multi-point result centred rather
+     * than arbitrarily picking the first. */
+    long sum_x = 0, sum_y = 0, sum_w = 0, sum_h = 0;
+    int count = 0;
+    for (unsigned i = 0; i < num; i++) {
+        if (!(af_u16(in_focus + (i / 16) * 2) & (1u << (i % 16)))) continue;
+        sum_x += af_s16(xs + i * 2);
+        sum_y += af_s16(ys + i * 2);
+        sum_w += af_u16(widths + i * 2);
+        sum_h += af_u16(heights + i * 2);
+        count++;
+    }
+    if (count == 0) return;
+
+    out->x      = (int)(sum_x / count);
+    out->y      = (int)(sum_y / count);
+    out->width  = (int)(sum_w / count);
+    out->height = (int)(sum_h / count);
+    out->points_in_focus = count;
+    out->valid  = 1;
+}
+
+/* Nikon AFInfo2 (MakerNote 0x00b7). Offsets are into the blob as LibRaw
+ * presents it, which excludes the 4-byte version header ExifTool counts.
+ * Verified against Z 6_2 files; see FOCUS_POINTS.md. */
+static void parse_nikon_af(const unsigned char* d, unsigned len,
+                           RawFocusPoint* out) {
+    if (len < 50) return;
+
+    out->af_image_width  = af_u16(d + 38);
+    out->af_image_height = af_u16(d + 40);
+    out->x               = af_u16(d + 42);
+    out->y               = af_u16(d + 44);
+    out->width           = af_u16(d + 46);
+    out->height          = af_u16(d + 48);
+
+    if (out->af_image_width == 0 || out->af_image_height == 0) return;
+    /* A zeroed position means no AF data rather than a corner focus. */
+    if (out->x == 0 && out->y == 0) return;
+
+    out->points_in_focus = 1;
+    out->valid = 1;
+}
+
+int raw_read_focus(const char* path, RawFocusPoint* out) {
+    memset(out, 0, sizeof(*out));
+
+    libraw_data_t* lr = libraw_init(0);
+    if (!lr) return -1;
+
+    if (libraw_open_file(lr, path) != LIBRAW_SUCCESS) {
+        libraw_close(lr);
+        return -1;
+    }
+
+    out->flip = lr->sizes.flip;
+
+    /* MakerNotes are parsed during open, so no unpack is needed and this stays
+     * as cheap as raw_read_meta. */
+    for (int i = 0; i < lr->makernotes.common.afcount &&
+                    i < LIBRAW_AFDATA_MAXCOUNT; i++) {
+        libraw_afinfo_item_t* item = &lr->makernotes.common.afdata[i];
+        if (!item->AFInfoData || item->AFInfoData_length == 0) continue;
+
+        if (item->AFInfoData_tag == 0x0026) {
+            out->vendor = RAW_AF_VENDOR_CANON;
+            parse_canon_af(item->AFInfoData, item->AFInfoData_length, out);
+        } else if (item->AFInfoData_tag == 0x00b7) {
+            out->vendor = RAW_AF_VENDOR_NIKON;
+            parse_nikon_af(item->AFInfoData, item->AFInfoData_length, out);
+        }
+        if (out->valid) break;
+    }
+
+    libraw_close(lr);
+    return 0;
+}
+
 /* ── Decode a raw file to an 8-bit RGB bitmap ───────────────────────────── */
 
 RawImageResult* raw_decode_file(const char* path) {

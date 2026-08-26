@@ -81,6 +81,42 @@ final class RawImageMetaNative extends Struct {
   external int flip;
 }
 
+/// Raw autofocus data, in the vendor's own coordinate system. Canon and Nikon
+/// disagree on origin and sign, so interpretation happens in Dart — see
+/// `FocusPoint` in raw_decoder.dart and FOCUS_POINTS.md.
+final class RawFocusPointNative extends Struct {
+  /// 0 none, 1 Canon, 2 Nikon.
+  @Int32()
+  external int vendor;
+
+  @Int32()
+  external int valid;
+
+  @Int32()
+  external int x;
+
+  @Int32()
+  external int y;
+
+  @Int32()
+  external int width;
+
+  @Int32()
+  external int height;
+
+  @Int32()
+  external int afImageWidth;
+
+  @Int32()
+  external int afImageHeight;
+
+  @Int32()
+  external int flip;
+
+  @Int32()
+  external int pointsInFocus;
+}
+
 // ── Native function typedefs ──────────────────────────────────────────────
 
 typedef _RawDecodeFileNative = Pointer<RawImageResultNative> Function(
@@ -106,6 +142,11 @@ typedef _RawFreeThumbNative = Void Function(
     Pointer<RawThumbResultNative> thumb);
 typedef RawFreeThumb = void Function(Pointer<RawThumbResultNative> thumb);
 
+typedef _RawReadFocusNative = Int32 Function(
+    Pointer<Utf8> path, Pointer<RawFocusPointNative> out);
+typedef RawReadFocus = int Function(
+    Pointer<Utf8> path, Pointer<RawFocusPointNative> out);
+
 // ── Binding loader ────────────────────────────────────────────────────────
 
 class LibRawBindings {
@@ -116,6 +157,7 @@ class LibRawBindings {
   late final RawFreeResult freeResult;
   late final RawDecodeThumb decodeThumb;
   late final RawFreeThumb freeThumb;
+  late final RawReadFocus readFocus;
 
   LibRawBindings._(this._lib) {
     decodeFile = _lib
@@ -128,6 +170,8 @@ class LibRawBindings {
         'raw_decode_thumb');
     freeThumb =
         _lib.lookupFunction<_RawFreeThumbNative, RawFreeThumb>('raw_free_thumb');
+    readFocus = _lib
+        .lookupFunction<_RawReadFocusNative, RawReadFocus>('raw_read_focus');
   }
 
   factory LibRawBindings.open(String soPath) {

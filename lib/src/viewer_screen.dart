@@ -68,6 +68,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   ui.Image? _image;
   RawMeta? _meta;
+  FocusPoint? _focus;
+  bool _showFocusPoint = true;
   String? _fileName;
   bool _loading = false;
   bool _showingPreview = false;
@@ -172,6 +174,48 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void _previous() => _goTo(_index - 1);
   void _next() => _goTo(_index + 1);
 
+  /// The AF area in decoded-image pixels, if this file recorded one.
+  Rect? get _focusArea {
+    final image = _image;
+    final focus = _focus;
+    if (image == null || focus == null) return null;
+    final area = focus.areaInImage(image.width, image.height);
+    if (area == null) return null;
+    return Rect.fromCenter(
+      center: Offset(area.centerX, area.centerY),
+      width: area.width,
+      height: area.height,
+    );
+  }
+
+  /// Pans so [imagePoint] sits in the middle of the canvas at [scale].
+  ///
+  /// The painter centres the image and then applies `_offset`, so the offset
+  /// needed is the distance from the image centre to the target, scaled.
+  void _centreOn(Offset imagePoint, double scale) {
+    final image = _image;
+    if (image == null) return;
+    setState(() {
+      _scale = scale.clamp(_minScale, _maxScale);
+      _offset = Offset(
+        (image.width / 2 - imagePoint.dx) * _scale,
+        (image.height / 2 - imagePoint.dy) * _scale,
+      );
+    });
+  }
+
+  /// Opens at 1:1 on the focus point, which is the view a photographer wants
+  /// first — critical sharpness where the camera actually focused. Falls back
+  /// to fit-to-window when the file records no AF data.
+  void _showInitialView() {
+    final area = _focusArea;
+    if (area == null) {
+      _fitToWindow();
+      return;
+    }
+    _centreOn(area.center, 1.0);
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     // KeyDownEvent only: honouring auto-repeat would queue a multi-second
     // decode per repeat while a key is held.
@@ -196,6 +240,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _error = null;
       _replaceImage(null);
       _meta = null;
+      _focus = null;
       _showingPreview = false;
       _fileName = path.split(Platform.pathSeparator).last;
       _scale = 1.0;
@@ -218,6 +263,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
           setState(() {
             _replaceImage(preview.image);
             _meta = preview.meta;
+            _focus = preview.focus;
             _showingPreview = true;
           });
           _fitAfterLayout();
@@ -239,6 +285,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       setState(() {
         _replaceImage(decoded.image);
         _meta = decoded.meta;
+        _focus = decoded.focus;
         _showingPreview = false;
         _loading = false;
       });
@@ -261,10 +308,10 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   /// The canvas is not measurable until it has been laid out with the new
-  /// image, so fitting has to wait for the next frame.
+  /// image, so the initial view has to wait for the next frame.
   void _fitAfterLayout() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _fitToWindow();
+      if (mounted) _showInitialView();
     });
   }
 
@@ -360,6 +407,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
               icon: const Icon(Icons.fit_screen, color: Colors.white70),
               onPressed: _fitToWindow,
             ),
+            IconButton(
+              tooltip: _focus == null
+                  ? 'No focus point recorded in this file'
+                  : (_showFocusPoint ? 'Hide focus point' : 'Show focus point'),
+              icon: Icon(
+                _showFocusPoint
+                    ? Icons.center_focus_strong
+                    : Icons.center_focus_weak,
+                color: _focus == null
+                    ? Colors.white24
+                    : (_showFocusPoint
+                        ? const Color(0xFF00E676)
+                        : Colors.white70),
+              ),
+              onPressed: _focus == null
+                  ? null
+                  : () => setState(() => _showFocusPoint = !_showFocusPoint),
+            ),
+            IconButton(
+              tooltip: 'Centre on focus point at 100%',
+              icon: const Icon(Icons.my_location, color: Colors.white70),
+              onPressed: _focus == null ? null : _showInitialView,
+            ),
             TextButton(
               onPressed: () => _setScale(1.0),
               style: TextButton.styleFrom(
@@ -449,6 +519,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               image: _image!,
               scale: _scale,
               offset: _offset,
+              focusArea: _showFocusPoint ? _focusArea : null,
             ),
           ),
         ),
@@ -531,10 +602,14 @@ class _ImagePainter extends CustomPainter {
   final double scale;
   final Offset offset;
 
+  /// AF area in image pixels, already resolved; null hides the marker.
+  final Rect? focusArea;
+
   const _ImagePainter({
     required this.image,
     required this.scale,
     required this.offset,
+    this.focusArea,
   });
 
   @override
@@ -552,9 +627,51 @@ class _ImagePainter extends CustomPainter {
     final dst = Rect.fromLTWH(dx, dy, destW, destH);
 
     canvas.drawImageRect(image, src, dst, Paint()..filterQuality = FilterQuality.medium);
+
+    final focus = focusArea;
+    if (focus != null) _paintFocusMarker(canvas, focus, dx, dy);
+  }
+
+  /// Draws the AF area over the image. Deliberately prominent — its purpose is
+  /// to make a wrong coordinate interpretation obvious at a glance.
+  void _paintFocusMarker(Canvas canvas, Rect area, double dx, double dy) {
+    final rect = Rect.fromLTWH(
+      dx + area.left * scale,
+      dy + area.top * scale,
+      area.width * scale,
+      area.height * scale,
+    );
+
+    // Outline in black first so it stays legible over light subjects.
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..color = const Color(0x99000000),
+    );
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = const Color(0xFF00E676),
+    );
+
+    // Centre cross, so the exact point is readable when the box is large.
+    final c = rect.center;
+    const arm = 8.0;
+    final cross = Paint()
+      ..strokeWidth = 2
+      ..color = const Color(0xFF00E676);
+    canvas.drawLine(Offset(c.dx - arm, c.dy), Offset(c.dx + arm, c.dy), cross);
+    canvas.drawLine(Offset(c.dx, c.dy - arm), Offset(c.dx, c.dy + arm), cross);
   }
 
   @override
   bool shouldRepaint(_ImagePainter old) =>
-      old.image != image || old.scale != scale || old.offset != offset;
+      old.image != image ||
+      old.scale != scale ||
+      old.offset != offset ||
+      old.focusArea != focusArea;
 }

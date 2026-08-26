@@ -3,10 +3,10 @@
 A camera RAW image viewer for Linux desktop. Flutter for the UI, C for the
 decoding, joined by `dart:ffi`.
 
-Open a `.NEF`, `.CR3` or other RAW file and it appears fitted to the window with
-its EXIF data alongside. The camera's embedded JPEG preview is shown first — in
-roughly half a second — while the full demosaic runs in the background and
-replaces it a few seconds later.
+Open a folder of RAW files and browse it with the arrow keys. Each image opens
+at 1:1 centred on the camera's focus point, with its EXIF data alongside. The
+camera's embedded JPEG preview appears first — in roughly half a second — while
+the full demosaic runs in the background and replaces it a few seconds later.
 
 ## Requirements
 
@@ -58,6 +58,8 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 |---|---|
 | **Open Folder** | Loads every RAW in the folder and shows the first |
 | **← / →**, or Previous / Next | Move through the folder |
+| **Focus point** | Toggles the marker showing where the camera focused |
+| **Centre on focus** | Jumps back to 1:1 on the focus point |
 | **Fit to window** | Scales so the whole frame is visible |
 | **1:1** | Actual size, one image pixel per screen pixel |
 | **Zoom in / out** | 1.25× steps |
@@ -66,9 +68,13 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 The folder scan is not recursive, matches extensions case-insensitively, and
 sorts by name. The toolbar shows the position in the folder, e.g. `3 / 13`.
 
-Files open fitted to the window. The EXIF panel shows the file name, camera,
-resolution, ISO, shutter, aperture and focal length; anything the file does not
-provide reads `—`.
+Files open at **1:1, centred on the camera's focus point**, so critical
+sharpness is the first thing on screen. Files with no recorded AF data fall back
+to fit-to-window. See `FOCUS_POINTS.md` for how that data is stored — and note
+the Canon Y-direction switch documented there, which may need flipping.
+
+The EXIF panel shows the file name, camera, resolution, ISO, shutter, aperture
+and focal length; anything the file does not provide reads `—`.
 
 ## Performance
 
@@ -89,6 +95,7 @@ first paint is near-full quality rather than a placeholder.
 src/libraw_wrapper.c        C wrapper over LibRaw -> libraw_wrapper.so
 lib/src/libraw_bindings.dart  dart:ffi structs and symbol lookups
 lib/src/raw_decoder.dart      isolate decoding, pixel conversion, orientation
+lib/src/focus_point.dart      AF coordinate mapping (no dart:ui, so tool/ can use it)
 lib/src/viewer_screen.dart    toolbar, image canvas, EXIF panel
 lib/main.dart                 app entry point
 linux/CMakeLists.txt          Flutter runner plus the raw_wrapper target
@@ -97,6 +104,7 @@ scripts/setup.sh              dependency installation
 ```
 
 `DESIGN.md` describes the C API, the Dart wrapper and the UI in detail.
+`FOCUS_POINTS.md` documents how Canon and Nikon store focus point data.
 `PLAN.md` tracks completed and outstanding work.
 
 ## Development

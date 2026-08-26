@@ -309,13 +309,41 @@ Rapid navigation is safe rather than optimal: several decodes may be in flight
 at once, and `_requestId` ensures only the newest is displayed while the rest
 are disposed on arrival.
 
+### Focus point
+
+`lib/src/focus_point.dart` holds the geometry and, like `libraw_bindings.dart`,
+is deliberately free of `dart:ui` — so `tool/ffi_check.dart` can use it and the
+maths is testable without a Flutter binding. It returns a plain `FocusArea`
+which the widget layer converts to a `Rect`.
+
+The C wrapper returns the vendor's **raw** values rather than a resolved pixel
+position. Canon and Nikon disagree on origin and sign, and Canon's Y direction
+is not settled, so interpretation belongs where it can be switched and tested
+without rebuilding the native library.
+
+Three transforms stack, each individually plausible when wrong:
+
+1. **Vendor coordinates → top-left origin.** Canon measures from the image
+   centre with signed values; Nikon from the top-left, unsigned.
+2. **AF space → decoded image.** AF coordinates are relative to
+   `AFImageWidth`/`AFImageHeight`, which match the *embedded preview*, not the
+   full decode — about 0.35% smaller. Each axis scales independently.
+3. **Rotation.** AF coordinates are recorded against the unrotated sensor, so
+   the same flip applied to previews applies here. This mirrors
+   `RawDecoder._applyFlip` exactly; if one changes, so must the other.
+
+`FocusPoint.canonPositiveYIsUp` is a deliberate switch, not a constant — the
+references contradict each other, and a wrong choice mirrors the point across
+the horizontal axis, which looks plausible rather than broken. See
+FOCUS_POINTS.md.
+
 ### Loading sequence
 
 ```
 _decodeFile(path)
   ├── ++_requestId, clear state, dispose old image
   ├── start full decode (not awaited yet)
-  ├── await preview  → show it, fit to window        ~0.5 s
+  ├── await preview  → show it, 1:1 on focus point   ~0.5 s
   └── await full     → replace image, keep user zoom  ~3.5 s
 ```
 

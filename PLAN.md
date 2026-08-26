@@ -205,32 +205,35 @@ focused — the view a photographer actually wants first, to check critical shar
   1–5 ms metadata budget. We parse the blob ourselves in the wrapper. No MakerNote IFD walking and
   no `exiftool` runtime dependency. The vendor structs (`makernotes.canon`, `makernotes.nikon`)
   are useless here — Canon's carries only `AFMicroAdj*`.
-- [ ] **5.5 Extend the C API** — return focus point(s) as normalised coordinates plus a validity
-  flag. Append to `RawImageMeta` or add a separate struct; remember struct layout is append-only
-  and `tool/ffi_check.dart` asserts the byte size.
-- [ ] **5.6 Thread through the FFI and decoder layers** — bindings, `RawMeta`, and whatever the
-  isolate needs to carry.
+- [x] **5.5 Extend the C API** — done 2026-08-26. New `raw_read_focus()` and `RawFocusPoint`
+  struct, kept separate from `RawImageMeta` so that layout stays stable. Returns the vendor's
+  **raw** values, not a resolved pixel position — see 5.7.
+- [x] **5.6 Thread through the FFI and decoder layers** — done. `RawFocusPointNative`, read inside
+  both isolate paths (preview and full decode), carried on `DecodedRawImage.focus`.
 
 ### Coordinate handling (the part most likely to be wrong)
 
-- [ ] **5.7 Map AF coordinates onto the decoded image.** Two known hazards, both of which have
-  already bitten this codebase once: the AF coordinate space is defined against
-  `AFImageWidth`/`AFImageHeight`, which need not equal the decoded dimensions; and orientation
-  must be applied, since `dcraw_process` rotates the image but MakerNote coordinates are recorded
-  against the unrotated sensor. See 2.7 and 3.1 for the same trap in metadata and previews.
-- [ ] **5.8 Verify against a known image** — pick a test frame with an obvious in-focus subject and
-  confirm the computed point lands on it, rather than trusting the arithmetic.
+- [x] **5.7 Map AF coordinates onto the decoded image** — done, in `lib/src/focus_point.dart`.
+  Interpretation lives in **Dart, not C**, so the Canon Y switch needs no native rebuild and the
+  three stacked transforms (vendor origin/sign → AF-space scaling → rotation) are unit-testable.
+  `focus_point.dart` is deliberately free of `dart:ui` so `tool/ffi_check.dart` can use it too.
+- [!] **5.8 Verify against a known image** — **awaiting user confirmation.** The arithmetic is
+  verified end to end (`tool/ffi_check.dart` resolves every test file, including the rotated
+  portrait frames), but whether the marker lands on the actual subject can only be judged by
+  someone who took the photo. Nikon should be correct; Canon depends on 5.3a.
 
 ### UI
 
-- [ ] **5.9 Open at 1:1 centred on the focus point**, replacing fit-on-load (3.2). `_offset` is
-  currently relative to a centred image, so centring on an arbitrary point means offsetting by the
-  delta between the image centre and the focus point, scaled.
-- [ ] **5.10 Fall back to fit-to-window** when no focus data exists — older files, third-party
-  lenses, manual focus. This must be silent and not look like a failure.
-- [ ] **5.11 Consider a focus point overlay** — a marker showing where the camera focused. Probably
-  worth a toggle; also the easiest way to verify 5.7 visually.
-- [ ] **5.12 Tests** — coordinate mapping including the rotated case, and the no-data fallback.
+- [x] **5.9 Open at 1:1 centred on the focus point** — done, replacing fit-on-load. `_centreOn()`
+  offsets by the distance from the image centre to the target, scaled.
+- [x] **5.10 Fall back to fit-to-window** — done, silently, in `_showInitialView()`. The
+  focus-related toolbar buttons disable themselves when a file records no AF data.
+- [x] **5.11 Focus point overlay** — done, on by default, with a toolbar toggle and a
+  "centre on focus point" button. Drawn deliberately prominently (green box, black outline for
+  contrast, centre cross) because its main job is making a wrong interpretation obvious.
+- [x] **5.12 Tests** — `test/focus_point_test.dart`, 14 cases: vendor origins, the Canon Y switch
+  mirroring across the centre line, per-axis scaling, all four rotations staying inside the image
+  bounds, and null returns for unusable data.
 
 ---
 

@@ -15,6 +15,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'package:raw_viewer/src/libraw_bindings.dart';
+import 'package:raw_viewer/src/focus_point.dart';
 
 String _readCharArray(Array<Uint8> arr, int len) {
   final buf = <int>[];
@@ -62,6 +63,50 @@ void main(List<String> args) {
     final metaWidth = m.width;
     final metaHeight = m.height;
     calloc.free(metaPtr);
+
+    // ── Focus point ──────────────────────────────────────────────────────
+    final focusPtr = calloc<RawFocusPointNative>();
+    final frc = bindings.readFocus(pathPtr, focusPtr);
+    final fp = focusPtr.ref;
+    if (frc != 0) {
+      print('  focus  : read failed');
+    } else if (fp.valid == 0) {
+      print('  focus  : none recorded (vendor=${fp.vendor})');
+    } else {
+      final vendor = switch (fp.vendor) {
+        1 => 'Canon',
+        2 => 'Nikon',
+        _ => 'vendor ${fp.vendor}',
+      };
+      print('  focus  : $vendor raw=(${fp.x}, ${fp.y}) '
+          'area=${fp.width}x${fp.height} '
+          'afImage=${fp.afImageWidth}x${fp.afImageHeight} '
+          'flip=${fp.flip} inFocus=${fp.pointsInFocus}');
+      final point = FocusPoint(
+        vendor: fp.vendor,
+        rawX: fp.x,
+        rawY: fp.y,
+        areaWidth: fp.width,
+        areaHeight: fp.height,
+        afImageWidth: fp.afImageWidth,
+        afImageHeight: fp.afImageHeight,
+        flip: fp.flip,
+        pointsInFocus: fp.pointsInFocus,
+      );
+      for (final up in [true, false]) {
+        FocusPoint.canonPositiveYIsUp = up;
+        final area = point.areaInImage(metaWidth, metaHeight);
+        final label = fp.vendor == 1 ? (up ? ' (+Y up)' : ' (+Y down)') : '';
+        if (area != null) {
+          print('           -> centre (${area.centerX.toStringAsFixed(0)}, '
+              '${area.centerY.toStringAsFixed(0)}) of '
+              '${metaWidth}x$metaHeight$label');
+        }
+        if (fp.vendor != 1) break; // only Canon is ambiguous
+      }
+      FocusPoint.canonPositiveYIsUp = true;
+    }
+    calloc.free(focusPtr);
 
     final sw = Stopwatch()..start();
     final resultPtr = bindings.decodeFile(pathPtr);
