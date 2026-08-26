@@ -139,15 +139,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
     // failure here must not stop the real decode.
     try {
       final preview = await RawDecoder.decodePreview(path);
-      if (!mounted || request != _requestId) {
-        preview?.image.dispose();
-      } else if (preview != null && _image == null) {
-        setState(() {
-          _replaceImage(preview.image);
-          _meta = preview.meta;
-          _showingPreview = true;
-        });
-        _fitAfterLayout();
+      if (preview != null) {
+        // Every path that does not adopt the image must dispose it, including
+        // the case where the full decode somehow got there first.
+        final wanted = mounted && request == _requestId && _image == null;
+        if (wanted) {
+          setState(() {
+            _replaceImage(preview.image);
+            _meta = preview.meta;
+            _showingPreview = true;
+          });
+          _fitAfterLayout();
+        } else {
+          preview.image.dispose();
+        }
       }
     } catch (_) {
       // Fall through to the full decode.

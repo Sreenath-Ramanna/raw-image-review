@@ -57,6 +57,13 @@ Last updated: 2026-08-26
   each open now produces two images rather than one. All swaps go through `_replaceImage()`,
   which disposes the outgoing image; `State.dispose()` releases the last one. Images belonging
   to a superseded request are disposed rather than shown, guarded by `_requestId`.
+  Audited again on 2026-08-26 and hardened: the preview branch had a path that adopted the image
+  only when `_image == null` and silently dropped it otherwise. Unreachable today (the preview is
+  awaited before the full decode is), but it would have become a ~130 MB-per-open leak the moment
+  anyone applied whichever decode finished first. Every non-adopting path now disposes explicitly.
+  Native side verified separately with `/tmp/leak_probe.c`: RSS flat at 12 MB across six
+  decode+preview cycles of a 33MP CR3 (~98 MB allocated per pass), so `raw_free_result` and
+  `raw_free_thumb` are sound.
 - [ ] **2.5 Audit the isolate FFI path** — `DynamicLibrary.open` runs per decode; confirm that's
   intended (it is cheap, but worth a comment) and that `pathPtr` is freed on every exit path.
 - [x] **2.6 Test with real RAW files** — done 2026-08-26 against `test-images/` (13 files:
