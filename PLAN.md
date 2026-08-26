@@ -280,6 +280,29 @@ focused — the view a photographer actually wants first, to check critical shar
 
 ---
 
+## Phase 8 — Shortcuts and desktop integration
+
+- [x] **8.1 Delete key shortcut** — done 2026-08-27. Routed through `_deleteCurrent()`, so
+  "Confirm delete" governs the key exactly as it governs the button. `KeyDownEvent` only, like the
+  arrows, so held keys do not queue repeats.
+- [x] **8.2 Application icon** — done. Camera iris, drawn geometrically by `tool/make_icon.py` and
+  emitted at eight sizes (16–512). Generated rather than hand-drawn so it can be regenerated after
+  a palette change; rendered at 8× and downsampled for clean edges. Checked at 16 px, where it
+  still reads as an aperture.
+- [x] **8.3 Wire the icon into the window** — `set_window_icon()` in `my_application.cc` loads the
+  full size set from the bundle, resolving the path via `/proc/self/exe` so it works from any
+  working directory and through a symlink.
+- [x] **8.4 Desktop integration — required on Wayland.** `gtk_window_set_icon_list()` is **ignored
+  by Wayland compositors**; the icon comes from a `.desktop` file whose basename matches the app id
+  (`com.example.raw_viewer`). So 8.3 alone is X11-only. `scripts/install-desktop.sh` installs the
+  entry plus hicolor icons under `~/.local/share`, with `--uninstall` to reverse it.
+  Verified: `desktop-file-validate` clean, all eight sizes installed, and
+  `Gtk.IconTheme.lookup_icon` resolves the name at both 48 px and 256 px.
+  **If the app id in `linux/CMakeLists.txt` is ever renamed, the `.desktop` filename and its
+  `Icon=`/`StartupWMClass=` must change with it or the icon silently disappears on Wayland.**
+
+---
+
 ## Notes / decisions
 
 - LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and

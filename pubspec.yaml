@@ -20,3 +20,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Window icon, loaded from the bundle by linux/runner/my_application.cc.
+  # Regenerate with: python3 tool/make_icon.py
+  assets:
+    - assets/icon/

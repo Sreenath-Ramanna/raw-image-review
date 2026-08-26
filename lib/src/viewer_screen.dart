@@ -353,6 +353,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _previous();
       return KeyEventResult.handled;
     }
+    if (event.logicalKey == LogicalKeyboardKey.delete) {
+      // Routed through the same path as the button, so "Confirm delete"
+      // governs the key too.
+      _deleteCurrent();
+      return KeyEventResult.handled;
+    }
     return KeyEventResult.ignored;
   }
 
@@ -599,7 +605,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
             ElevatedButton.icon(
               onPressed: _deleting ? null : _deleteCurrent,
               icon: const Icon(Icons.delete_outline, size: 18),
-              label: const Text('Delete'),
+              label: const Text('Delete  (Del)'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF7F1D1D),
                 foregroundColor: Colors.white,
@@ -680,7 +686,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
             ),
             SizedBox(height: 8),
             Text(
-              'Use ← and → to move between images',
+              'Use ← and → to move between images, Del to discard',
               style: TextStyle(color: Colors.white24, fontSize: 12),
             ),
           ],

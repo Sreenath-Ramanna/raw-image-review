@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=RAW Viewer
+GenericName=Camera RAW Viewer
+Comment=Review and cull camera RAW images by focus and composition
+# @EXEC@ is replaced with the absolute path to the bundle executable by
+# scripts/install-desktop.sh — a .desktop Exec must be an absolute path or a
+# name on PATH.
+Exec=@EXEC@ %f
+# Must match APPLICATION_ID in linux/CMakeLists.txt: under Wayland the
+# compositor matches the window's app id against this file's basename to find
+# the icon. Renaming either without the other silently loses the icon.
+Icon=com.example.raw_viewer
+StartupWMClass=com.example.raw_viewer
+Terminal=false
+Categories=Graphics;Photography;Viewer;
+MimeType=image/x-canon-cr2;image/x-canon-cr3;image/x-nikon-nef;image/x-sony-arw;image/x-fuji-raf;image/x-adobe-dng;image/x-olympus-orf;image/x-pentax-pef;image/x-panasonic-rw2;
+Keywords=RAW;photo;camera;NEF;CR3;cull;

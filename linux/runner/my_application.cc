@@ -19,6 +19,40 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
+// Loads the window icon from the bundle.
+//
+// The icons ship as Flutter assets, so they sit beside the executable at
+// data/flutter_assets/... . Resolving via /proc/self/exe rather than the
+// working directory means the app can be launched from anywhere, and via a
+// symlink — readlink() gives the real path either way.
+static void set_window_icon(GtkWindow* window) {
+  g_autofree gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe == nullptr) {
+    return;
+  }
+  g_autofree gchar* bundle = g_path_get_dirname(exe);
+
+  // Largest first: GTK scales down well, up badly.
+  const int sizes[] = {512, 256, 128, 64, 48, 32, 24, 16};
+  g_autoptr(GList) icons = nullptr;
+  for (gsize i = 0; i < G_N_ELEMENTS(sizes); i++) {
+    g_autofree gchar* name = g_strdup_printf("app_icon_%d.png", sizes[i]);
+    g_autofree gchar* path = g_build_filename(
+        bundle, "data", "flutter_assets", "assets", "icon", name, nullptr);
+    GdkPixbuf* pixbuf = gdk_pixbuf_new_from_file(path, nullptr);
+    if (pixbuf != nullptr) {
+      icons = g_list_append(icons, pixbuf);
+    }
+  }
+
+  if (icons != nullptr) {
+    // Handing GTK the whole set lets it pick per context — title bar, alt-tab
+    // and the task switcher all ask for different sizes.
+    gtk_window_set_icon_list(window, icons);
+    g_list_free_full(g_steal_pointer(&icons), g_object_unref);
+  }
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -53,6 +87,7 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+  set_window_icon(window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

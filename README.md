@@ -99,6 +99,29 @@ The bundle contains the executable, `data/` (Flutter assets and ICU data), and
 `lib/` (the Flutter engine plus `libraw_wrapper.so`). `libraw_wrapper.so` is
 loaded lazily on the first image you open, not at startup.
 
+### Desktop entry and icon
+
+```bash
+./scripts/install-desktop.sh              # install
+./scripts/install-desktop.sh --uninstall  # remove
+```
+
+This adds a menu entry and installs the app icon into the hicolor theme, all
+under `~/.local/share` — no root required.
+
+**On Wayland this is what makes the window icon appear at all.** A Wayland
+compositor ignores `gtk_window_set_icon_list()` and instead matches the window's
+app id (`com.example.raw_viewer`) against a `.desktop` file of the same name,
+taking the icon from there. Without the install you get a generic placeholder no
+matter what the application code does. On X11 the in-process icon works by
+itself, and this just adds the menu entry.
+
+The `.desktop` file records an absolute path to the executable, so re-run the
+script if you move the bundle.
+
+The icon is generated, not hand-drawn — `python3 tool/make_icon.py` redraws all
+eight sizes from geometry in `tool/make_icon.py`.
+
 ## Supported formats
 
 Canon `.cr2` `.cr3`, Nikon `.nef`, Sony `.arw`, Fujifilm `.raf`, Adobe `.dng`,
@@ -114,6 +137,7 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 |---|---|
 | **Open Folder** | Loads every RAW in the folder and shows the first |
 | **← / →**, or Previous / Next | Move through the folder |
+| **Del** | Same as the Delete button — obeys "Confirm delete" |
 | **Focus point** | Toggles the marker showing where the camera focused |
 | **Centre on focus** | Jumps back to 1:1 on the focus point |
 | **Fit to window** | Scales so the whole frame is visible |
@@ -134,7 +158,9 @@ Disk space is reclaimed when you empty the Trash. The deleted file is removed
 from the browsing list immediately, so Previous/Next never return to it, and the
 viewer advances to the next frame — or steps back if you deleted the last one.
 
-Untick **Confirm delete** to cull without a prompt on each file.
+Untick **Confirm delete** to cull without a prompt on each file — with it off,
+`Del` discards the current frame in a single keystroke, which is the fast path
+through a shoot.
 
 Note: `gio trash` refuses to trash files on tmpfs and similar system-internal
 mounts. Photos on a normal disk or removable card are fine; the error is
@@ -203,6 +229,8 @@ lib/main.dart                 app entry point
 linux/CMakeLists.txt          Flutter runner plus the raw_wrapper target
 tool/ffi_check.dart           drives the .so through the real bindings, no UI
 tool/bench.dart               times the C decode and the Dart conversion separately
+tool/make_icon.py             regenerates the app icon at every size
+linux/packaging/              .desktop entry template
 scripts/setup.sh              dependency installation
 ```
 
