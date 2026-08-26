@@ -174,6 +174,66 @@ Last updated: 2026-08-26
 
 ---
 
+## Phase 5 — Open at 100% centred on the focus point
+
+Goal: instead of fitting the whole frame, open each image at 1:1 centred on where the camera
+focused — the view a photographer actually wants first, to check critical sharpness.
+
+### Investigation (do this before writing any code)
+
+- [x] **5.1 Research how AF point data is stored** — done 2026-08-26. Both vendors use MakerNotes,
+  with nothing in common: Canon `0x0026` (AFInfo2, origin at image **centre**, signed), Nikon
+  `0x00b7` (AFInfo2, origin **top-left**, unsigned). See `FOCUS_POINTS.md`.
+- [x] **5.2 Verify the data is present in the test images** — **yes, in both.** `afcount == 1` for
+  every file. Canon: 5472-byte blob, `NumAFPoints=651`, `ValidAFPoints=1`, in-focus point at
+  `(-783,-423)` with a 163×163 area. Nikon: 56-byte blob, one area at `(4068,2864)` sized 285×308.
+  X/Y vary per image while the area size stays fixed, confirming the offsets are right.
+- [x] **5.3 Write `FOCUS_POINTS.md`** — done, including layouts, verified samples, coordinate
+  mapping, and open questions.
+- [!] **5.3a Resolve the Canon Y direction** — **BLOCKING for Canon.** Two references contradict
+  each other on whether positive Y is up or down for EOS bodies. Getting it wrong mirrors the point
+  across the horizontal axis: wrong, but plausible-looking, so it will not announce itself.
+  Resolve visually via 5.11, or cross-check with `exiftool`
+  (`sudo dnf install -y perl-Image-ExifTool`). Nikon is unaffected — its convention is unambiguous
+  and verified.
+
+### Extraction path (decide once 5.1–5.3 are known)
+
+- [x] **5.4 Choose how to read it** — decided 2026-08-26: **a hybrid of (a) and (b)**. LibRaw does
+  not decode AF points into named fields, but `imgdata.makernotes.common.afdata[]` hands over the
+  raw MakerNote blob with its tag id, populated by `libraw_open_file` alone — so it stays inside the
+  1–5 ms metadata budget. We parse the blob ourselves in the wrapper. No MakerNote IFD walking and
+  no `exiftool` runtime dependency. The vendor structs (`makernotes.canon`, `makernotes.nikon`)
+  are useless here — Canon's carries only `AFMicroAdj*`.
+- [ ] **5.5 Extend the C API** — return focus point(s) as normalised coordinates plus a validity
+  flag. Append to `RawImageMeta` or add a separate struct; remember struct layout is append-only
+  and `tool/ffi_check.dart` asserts the byte size.
+- [ ] **5.6 Thread through the FFI and decoder layers** — bindings, `RawMeta`, and whatever the
+  isolate needs to carry.
+
+### Coordinate handling (the part most likely to be wrong)
+
+- [ ] **5.7 Map AF coordinates onto the decoded image.** Two known hazards, both of which have
+  already bitten this codebase once: the AF coordinate space is defined against
+  `AFImageWidth`/`AFImageHeight`, which need not equal the decoded dimensions; and orientation
+  must be applied, since `dcraw_process` rotates the image but MakerNote coordinates are recorded
+  against the unrotated sensor. See 2.7 and 3.1 for the same trap in metadata and previews.
+- [ ] **5.8 Verify against a known image** — pick a test frame with an obvious in-focus subject and
+  confirm the computed point lands on it, rather than trusting the arithmetic.
+
+### UI
+
+- [ ] **5.9 Open at 1:1 centred on the focus point**, replacing fit-on-load (3.2). `_offset` is
+  currently relative to a centred image, so centring on an arbitrary point means offsetting by the
+  delta between the image centre and the focus point, scaled.
+- [ ] **5.10 Fall back to fit-to-window** when no focus data exists — older files, third-party
+  lenses, manual focus. This must be silent and not look like a failure.
+- [ ] **5.11 Consider a focus point overlay** — a marker showing where the camera focused. Probably
+  worth a toggle; also the easiest way to verify 5.7 visually.
+- [ ] **5.12 Tests** — coordinate mapping including the rotated case, and the no-data fallback.
+
+---
+
 ## Notes / decisions
 
 - LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and
