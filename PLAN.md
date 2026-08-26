@@ -174,7 +174,7 @@ Last updated: 2026-08-26
 
 ---
 
-## Phase 5 — Open at 100% centred on the focus point
+## Phase 5 — Open at 100% centred on the focus point ✅ COMPLETE
 
 Goal: instead of fitting the whole frame, open each image at 1:1 centred on where the camera
 focused — the view a photographer actually wants first, to check critical sharpness.
@@ -190,12 +190,12 @@ focused — the view a photographer actually wants first, to check critical shar
   X/Y vary per image while the area size stays fixed, confirming the offsets are right.
 - [x] **5.3 Write `FOCUS_POINTS.md`** — done, including layouts, verified samples, coordinate
   mapping, and open questions.
-- [!] **5.3a Resolve the Canon Y direction** — **BLOCKING for Canon.** Two references contradict
-  each other on whether positive Y is up or down for EOS bodies. Getting it wrong mirrors the point
-  across the horizontal axis: wrong, but plausible-looking, so it will not announce itself.
-  Resolve visually via 5.11, or cross-check with `exiftool`
-  (`sudo dnf install -y perl-Image-ExifTool`). Nikon is unaffected — its convention is unambiguous
-  and verified.
+- [x] **5.3a Canon Y direction — RESOLVED 2026-08-26: positive Y is UP.** Confirmed by the user
+  against real EOS R7 frames, the marker landing on the intended subjects. The two references
+  contradicted each other; the one claiming "+Y up for EOS" was right, and the chiark-rendered
+  ExifTool table claiming downward was wrong. `FocusPoint.canonPositiveYIsUp` stays a switch
+  rather than a constant, since PowerShot bodies use the opposite convention and other EOS
+  generations are untested.
 
 ### Extraction path (decide once 5.1–5.3 are known)
 
@@ -217,10 +217,10 @@ focused — the view a photographer actually wants first, to check critical shar
   Interpretation lives in **Dart, not C**, so the Canon Y switch needs no native rebuild and the
   three stacked transforms (vendor origin/sign → AF-space scaling → rotation) are unit-testable.
   `focus_point.dart` is deliberately free of `dart:ui` so `tool/ffi_check.dart` can use it too.
-- [!] **5.8 Verify against a known image** — **awaiting user confirmation.** The arithmetic is
-  verified end to end (`tool/ffi_check.dart` resolves every test file, including the rotated
-  portrait frames), but whether the marker lands on the actual subject can only be judged by
-  someone who took the photo. Nikon should be correct; Canon depends on 5.3a.
+- [x] **5.8 Verify against a known image** — **confirmed 2026-08-26.** The user checked the
+  rendered markers against the subjects they had actually shot and reported the Canon
+  interpretation correct. Together with the end-to-end arithmetic check in `tool/ffi_check.dart`
+  (every test file resolves, including the rotated portrait frames), the feature is verified.
 
 ### UI
 

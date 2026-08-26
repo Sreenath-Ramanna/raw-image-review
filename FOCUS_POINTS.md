@@ -22,7 +22,7 @@ origins and sign conventions all differ.
 | AF points described | 651 | 1 area |
 | Origin | **image centre**, signed | **top-left**, unsigned |
 | Coordinate space | `AFImageWidth` × `AFImageHeight` | same |
-| Y direction | **ambiguous — see below** | downward |
+| Y direction | **up** (confirmed) | downward |
 
 **Both are readable without a MakerNote parser of our own.** LibRaw already
 extracts these blobs; see *Getting at the data* below.
@@ -96,33 +96,34 @@ Positions are the **centre of the AF area**, with the **origin at the centre of
 the image**, in a space measured by `AFImageWidth` × `AFImageHeight`. Values are
 **signed**; left of centre is negative.
 
+### Y direction — resolved: positive Y is UP
+
 ```
 x_pixels = AFAreaXPosition + AFImageWidth  / 2
-y_pixels = ?                                        ← see below
+y_pixels = AFImageHeight / 2 - AFAreaYPosition       ← note the subtraction
 ```
 
-### ⚠ The Y direction is unresolved
+**Confirmed 2026-08-26 for the EOS R7** by rendering the marker and checking it
+against the intended subjects. This had to be settled by observation because two
+references disagreed:
 
-Two references disagree:
+- One stated positive Y is **up** for EOS and down for PowerShot. ✅ **Correct.**
+- ExifTool's tag table as rendered on the chiark mirror stated EOS uses origin
+  at top with Y increasing *downward*. ❌ Contradicted by observation — most
+  likely an artefact of that page's rendering rather than ExifTool itself.
 
-- One states positive Y is **up** for EOS models and down for PowerShot.
-- ExifTool's own tag table, as rendered on the chiark mirror, states EOS uses
-  **origin at top with Y increasing downward**, and PowerShot the reverse.
+Getting this wrong mirrors the focus point across the horizontal axis. For an
+off-centre subject that is badly wrong but still *plausible-looking*, so it does
+not announce itself — which is why `FocusPoint.canonPositiveYIsUp` remains a
+switch rather than being folded into a constant. PowerShot bodies are documented
+to use the opposite convention, and other EOS generations are untested.
 
-These cannot both be right, and getting it wrong mirrors the focus point across
-the horizontal axis — which for an off-centre subject is badly wrong but still
-*plausible-looking*, so it will not announce itself.
-
-**Resolve empirically** (PLAN 5.8): render a marker on a frame with an obvious
-subject and see which interpretation lands on it. Do not ship either convention
-on the strength of the documentation alone.
-
-Measured from `20250803_A0A8111.CR3`, both readings:
+Both readings for `20250803_A0A8111.CR3`, for reference:
 
 ```
 raw = (-783, -423)   area 163x163   AFImage 6960x4640
+  +Y up    ->  x=2697  y=2743      ← confirmed correct
   +Y down  ->  x=2697  y=1897
-  +Y up    ->  x=2697  y=2743
 ```
 
 ### Verified sample
@@ -243,17 +244,16 @@ invert, and PLAN 5.8 exists for this.
 
 ## Open questions
 
-1. **Canon Y direction.** The blocking ambiguity. Resolve visually.
-2. **Nikon bytes 0–1 and 50.** Inferred, not established. Byte 50 is presumably
+1. **Nikon bytes 0–1 and 50.** Inferred, not established. Byte 50 is presumably
    an in-focus/valid flag; if it can be 0, it must gate the feature.
-3. **What happens with no AF data?** Manual focus, adapted lenses and older
+2. **What happens with no AF data?** Manual focus, adapted lenses and older
    bodies may omit the tag or report zeroes. `afcount == 0` must fall back to
    fit-to-window silently (PLAN 5.10).
-4. **Multiple in-focus points.** Canon can flag several. Centre on the centroid,
+3. **Multiple in-focus points.** Canon can flag several. Centre on the centroid,
    or the first? Unresolved.
-5. **`AFAreaMode = 22`** on every R7 sample — meaning unknown, and worth
+4. **`AFAreaMode = 22`** on every R7 sample — meaning unknown, and worth
    decoding since it likely distinguishes subject tracking from single-point.
-6. **Other vendors.** Sony, Fujifilm and others use different tags entirely;
+5. **Other vendors.** Sony, Fujifilm and others use different tags entirely;
    LibRaw's `afdata` comment lists Sony's `0x2020`/`0x2022`/`0x940e`. Out of
    scope until Canon and Nikon work.
 
@@ -270,8 +270,8 @@ exiftool -a -G1 -s -AFInfo2 -AFAreaXPositions -AFAreaYPositions \
          -AFPointsInFocus -AFImageWidth -AFImageHeight test-images/*.CR3
 ```
 
-Worth doing before implementing — particularly for the Canon Y direction and the
-speculative Nikon fields.
+The Canon Y direction has since been settled by observation, but this would
+still be worth doing to confirm the speculative Nikon fields.
 
 ## Sources
 

@@ -38,13 +38,18 @@ class FocusPoint {
   static const int vendorNikon = 2;
 
   /// Whether Canon EOS bodies measure `AFAreaYPositions` upward from the image
-  /// centre. References contradict each other, so this is a switch rather than
-  /// a constant: flipping it mirrors the point across the horizontal axis.
+  /// centre.
+  ///
+  /// **`true` is confirmed correct for EOS**, verified 2026-08-26 against real
+  /// EOS R7 frames by checking the marker against the intended subjects. The
+  /// references disagreed on this, so it was settled by observation.
+  ///
+  /// Kept as a switch because PowerShot bodies are documented to use the
+  /// opposite convention, and other EOS generations are untested. Flipping it
+  /// mirrors the point across the horizontal axis — a wrong setting looks
+  /// plausible rather than broken, so change it only on visual evidence.
   ///
   /// Nikon is unaffected — its origin is the top-left corner and unambiguous.
-  ///
-  /// **Set this to `false` if Canon focus points land above the subject when
-  /// they should be below, or vice versa.** Nothing else needs changing.
   static bool canonPositiveYIsUp = true;
 
   final int vendor;

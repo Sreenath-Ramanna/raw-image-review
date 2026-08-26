@@ -317,9 +317,8 @@ maths is testable without a Flutter binding. It returns a plain `FocusArea`
 which the widget layer converts to a `Rect`.
 
 The C wrapper returns the vendor's **raw** values rather than a resolved pixel
-position. Canon and Nikon disagree on origin and sign, and Canon's Y direction
-is not settled, so interpretation belongs where it can be switched and tested
-without rebuilding the native library.
+position. Canon and Nikon disagree on origin and sign, so interpretation belongs
+where it can be switched and tested without rebuilding the native library.
 
 Three transforms stack, each individually plausible when wrong:
 
@@ -332,9 +331,11 @@ Three transforms stack, each individually plausible when wrong:
    the same flip applied to previews applies here. This mirrors
    `RawDecoder._applyFlip` exactly; if one changes, so must the other.
 
-`FocusPoint.canonPositiveYIsUp` is a deliberate switch, not a constant — the
-references contradict each other, and a wrong choice mirrors the point across
-the horizontal axis, which looks plausible rather than broken. See
+`FocusPoint.canonPositiveYIsUp` is confirmed `true` for EOS bodies, settled by
+observation after the references contradicted each other. It stays a switch
+rather than a constant because PowerShot bodies use the opposite convention and
+other EOS generations are untested — and because a wrong choice mirrors the
+point across the horizontal axis, which looks plausible rather than broken. See
 FOCUS_POINTS.md.
 
 ### Loading sequence
