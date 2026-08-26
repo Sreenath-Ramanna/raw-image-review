@@ -203,11 +203,17 @@ class _ViewerScreenState extends State<ViewerScreen> {
     return GestureDetector(
       onPanUpdate: (d) => setState(() => _offset += d.delta),
       child: ClipRect(
-        child: CustomPaint(
-          painter: _ImagePainter(
-            image: _image!,
-            scale: _scale,
-            offset: _offset,
+        // SizedBox.expand is load-bearing: a childless CustomPaint takes its
+        // size from `size` (default Size.zero), and Row's default
+        // crossAxisAlignment.center hands down loose vertical constraints, so
+        // without this the painter collapses to zero height and draws nothing.
+        child: SizedBox.expand(
+          child: CustomPaint(
+            painter: _ImagePainter(
+              image: _image!,
+              scale: _scale,
+              offset: _offset,
+            ),
           ),
         ),
       ),

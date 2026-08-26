@@ -57,12 +57,38 @@ Last updated: 2026-08-26
   leaking GPU memory on every open.
 - [ ] **2.5 Audit the isolate FFI path** — `DynamicLibrary.open` runs per decode; confirm that's
   intended (it is cheap, but worth a comment) and that `pathPtr` is freed on every exit path.
-- [ ] **2.6 Test with a real RAW file** — need a sample `.cr2`/`.nef`/`.dng` to verify end to end.
+- [x] **2.6 Test with real RAW files** — done 2026-08-26 against `test-images/` (13 files:
+  7× Nikon Z 6_2 NEF, 6× Canon EOS R7 CR3; gitignored, they are personal photos).
+  **All 13 decode correctly** through both the C layer and the Dart FFI layer.
+  Struct layouts verified: `sizeOf<RawImageResultNative>` = 32, `RawImageMetaNative` = 152,
+  both matching the C side exactly. Metadata, buffer sizes and RGB→RGBA conversion all correct.
+  Tool for re-running this: `dart run tool/ffi_check.dart <wrapper.so> <raw>...`
+  Still unverified: `ui.decodeImageFromPixels` → canvas, which needs the GUI (see 2.8).
+- [ ] **2.7 Portrait images report the wrong resolution** — found by 2.6. `raw_read_meta` returns
+  `sizes.width/height`, which is the *unrotated* sensor area, but `dcraw_process` applies the
+  camera orientation flag. So `DSC_1441.NEF` decodes to 4040×6064 while the EXIF panel
+  (`viewer_screen.dart:233`) reports 6064×4040. The displayed pixels are correct — only the
+  metadata line lies, and only for portrait shots.
+  Fix: use `sizes.iwidth/iheight` (post-flip dims) in the wrapper, or consult `sizes.flip`
+  and swap. Verify `iwidth/iheight` are populated after `libraw_open_file` alone, since
+  `raw_read_meta` deliberately skips unpack/process.
+- [x] **2.8 Blank canvas: decoded image never rendered** — FIXED 2026-08-26.
+  Symptom: opening a CR3 populated the EXIF panel and the "6984 × 4660 px / Scale: 100%" readout
+  (so the `ui.Image` existed) but the canvas stayed empty.
+  Cause: a childless `CustomPaint` takes its size from `size`, which defaults to `Size.zero`, and
+  `Row`'s default `crossAxisAlignment.center` passes *loose* vertical constraints — so
+  `constrain(Size.zero)` collapsed it to zero height. Measured: `Size(580.0, 0.0)` before,
+  `Size(580.0, 552.0)` after. The image was being painted into a zero-height box all along.
+  Fix: wrap the painter in `SizedBox.expand`. Regression test: `test/canvas_layout_test.dart`.
+- [ ] **2.9 "Fit to window" does not fit** — the button (`viewer_screen.dart:145`) just sets
+  `_scale = 1.0`, which is 1:1, not fit. Same root cause as 3.2; fix them together.
 
 ## Phase 3 — Make it usable
 
 - [ ] **3.1 Fast preview path** — decode the embedded JPEG thumbnail (`libraw_dcraw_thumb`) first for
-  instant display, then swap in the full decode. Full-res decode of a 45MP RAW takes seconds.
+  instant display, then swap in the full decode. **Measured 2.1–3.5 s per file** on this machine
+  (Z 6_2 24MP ≈ 2.2 s, R7 33MP ≈ 2.8 s), so this is the single biggest usability win available.
+  Metadata alone is 1–5 ms, so the EXIF panel can populate essentially instantly.
 - [ ] **3.2 Fit-to-window on load** — `_scale = 1.0` means a 8000px image opens at 1:1 and overflows.
   Compute the fit scale from the canvas size instead.
 - [ ] **3.3 Scroll-wheel zoom** centred on the cursor, and clamp panning to the image bounds.
