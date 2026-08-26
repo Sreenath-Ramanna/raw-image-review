@@ -149,7 +149,17 @@ Last updated: 2026-08-26
 
 - [x] **4.1 `git init` + first commit** — done 2026-08-26, commit `b2c94d0`. Identity is set
   repo-locally (`sreenath.ramanna <sreenath.kr32@gmail.com>`), not globally.
-- [ ] **4.2 README** — what it is, dependencies, build steps, supported formats.
+- [x] **4.2 README** — done 2026-08-26. Replaced the `flutter create` boilerplate: what it is,
+  per-distro dependencies (with the `LibRaw-devel` capitalisation trap called out), build and run,
+  supported formats, controls, measured performance, layout, and how to run the tests and
+  `tool/ffi_check.dart`.
+- [x] **4.5 DESIGN.md** — done 2026-08-26. Layer-by-layer: the C API (each function, its cost,
+  ownership rules, struct layouts with byte sizes), the FFI mirror, the Dart wrapper (isolate
+  threading, the statics-don't-cross-isolates trap, orientation normalisation, `RawMeta`
+  formatting guards), and the UI (widget tree, the load-bearing `SizedBox.expand`, zoom, the
+  loading sequence, image lifetime). Ends with a *Known gaps* section covering the missing error
+  detail, dead 16-bit path, untested `colors == 4` branch, undetectable 180° preview rotation,
+  and absent caching.
 - [ ] **4.3 Tests** — unit-test `RawMeta.shutterDisplay` / `apertureDisplay` edge cases
   (`shutter == 0` currently divides by zero), plus an FFI smoke test.
 - [ ] **4.4 Basic adjustments** — exposure / white balance sliders re-running `dcraw_process`.
