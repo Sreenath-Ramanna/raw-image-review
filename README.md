@@ -35,17 +35,69 @@ sudo apt-get install -y libraw-dev cmake ninja-build libgtk-3-dev clang pkg-conf
 
 ## Build and run
 
+Install the dependencies once:
+
 ```bash
-./scripts/setup.sh              # dependencies, once
-flutter run -d linux            # development
-flutter build linux --release   # for actual use
+./scripts/setup.sh
 ```
 
-The built bundle lands in `build/linux/x64/{debug,release}/bundle/`, with
-`libraw_wrapper.so` in its `lib/` subdirectory next to the executable.
+### Release — use this one
 
-Use `--release` for real work: the bundle is **48 MB instead of 147 MB** and
-starts faster. Decode speed is barely affected — see below.
+```bash
+flutter build linux --release
+./build/linux/x64/release/bundle/raw_viewer
+```
+
+A third of the size of a debug build and faster to start. Decode speed is
+effectively identical — see [Debug vs release](#debug-vs-release).
+
+### Debug — for development
+
+```bash
+flutter build linux --debug
+./build/linux/x64/debug/bundle/raw_viewer
+```
+
+Or let Flutter build and launch in one step, with hot reload attached:
+
+```bash
+flutter run -d linux
+```
+
+`flutter run` is the better development loop: press `r` to hot-reload Dart
+changes without restarting, `q` to quit. Note that changes to
+`src/libraw_wrapper.c` are **not** picked up by hot reload — restart
+`flutter run`, or re-run `flutter build`, to recompile the native library.
+
+### Running the built binary
+
+Either bundle can be launched from any working directory, using an absolute or
+relative path:
+
+```bash
+/home/you/raw_viewer/build/linux/x64/release/bundle/raw_viewer
+```
+
+The executable finds its resources relative to itself, so **the bundle must stay
+intact**. Copying just the executable elsewhere fails with:
+
+```
+error while loading shared libraries: libflutter_linux_gtk.so: cannot open shared object file
+```
+
+To install it somewhere permanent, move the whole `bundle/` directory and run
+the `raw_viewer` inside it — or symlink to that executable, which is fine
+because the symlink is resolved before the resource lookup:
+
+```bash
+cp -r build/linux/x64/release/bundle ~/.local/opt/raw_viewer
+ln -sf ~/.local/opt/raw_viewer/raw_viewer ~/.local/bin/raw_viewer
+raw_viewer            # if ~/.local/bin is on your PATH
+```
+
+The bundle contains the executable, `data/` (Flutter assets and ICU data), and
+`lib/` (the Flutter engine plus `libraw_wrapper.so`). `libraw_wrapper.so` is
+loaded lazily on the first image you open, not at startup.
 
 ## Supported formats
 
