@@ -92,10 +92,13 @@ Last updated: 2026-08-26
   instant display, then swap in the full decode. **Measured 2.1–3.5 s per file** on this machine
   (Z 6_2 24MP ≈ 2.2 s, R7 33MP ≈ 2.8 s), so this is the single biggest usability win available.
   Metadata alone is 1–5 ms, so the EXIF panel can populate essentially instantly.
-- [ ] **3.2 Fit-to-window *on load*** — the button works now (2.9), but opening a file still starts
-  at 1:1, showing a centre crop until the user clicks Fit. `_fitScale` is available; the wrinkle is
-  that the canvas has not been laid out when `_decodeFile` sets state, so the fit has to be applied
-  after the first frame (e.g. `addPostFrameCallback`) or computed in a `LayoutBuilder`.
+- [x] **3.2 Fit-to-window *on load*** — done 2026-08-26. Applied via `addPostFrameCallback` after
+  the decode completes. The canvas cannot be measured at that moment: `_canvasKey` is attached to
+  a widget that only exists once `_image != null`, so `_canvasSize` is still null when `setState`
+  runs. Waiting one frame costs an imperceptible ~16 ms of 1:1 before it snaps to fit, and keeps
+  `_scale` consistent with the sidebar readout (a `LayoutBuilder` would have fitted the image
+  while the panel still displayed the stale percentage, since the panel is built before layout).
+  Also added `mounted` guards around the post-await `setState` calls.
 - [x] **3.7 Show the file name** — base name only, above the EXIF block, ellipsised with a
   tooltip carrying the full name.
 - [ ] **3.3 Scroll-wheel zoom** centred on the cursor, and clamp panning to the image bounds.

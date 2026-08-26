@@ -119,12 +119,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
     try {
       final decoded = await RawDecoder.decode(path);
+      if (!mounted) return;
       setState(() {
         _image = decoded.image;
         _meta = decoded.meta;
         _loading = false;
       });
+
+      // The canvas has not been laid out with the new image yet, so its size
+      // is not measurable until after this frame. Fit once it has been.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _fitToWindow();
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
