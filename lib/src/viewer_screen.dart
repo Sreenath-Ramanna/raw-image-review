@@ -128,6 +128,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   String? _fileName;
   bool _loading = false;
   bool _showingPreview = false;
+  bool _decodingFull = false;
   String? _error;
 
   // Guards against a slow decode from an earlier file landing after the user
@@ -427,69 +428,88 @@ class _ViewerScreenState extends State<ViewerScreen> {
     });
 
     if (cached != null) {
+      setState(() => _loading = false);
       _fitAfterLayout();
       // Warm the new neighbours straight away — the user is already looking
       // at this one, so nothing is competing for the wait.
       _preloadAround(_index);
+      return;
     }
 
-    // Start the full decode first so the preview runs alongside it rather than
-    // delaying it.
-    final fullDecode = RawDecoder.decode(path);
-
-    // The embedded preview is best-effort: not every file has one, and a
-    // failure here must not stop the real decode.
+    // The embedded preview is the whole display path now: the full decode is
+    // 2-4 s and is only run when asked for. Preview quality is the camera's
+    // own rendering at ~99.7% of full resolution, which is what culling needs.
     try {
-      if (cached == null) {
-        final preview = await RawDecoder.decodePreview(path);
-        if (preview != null) {
-          // Every path that does not adopt the image must dispose it, including
-          // the case where the full decode somehow got there first.
-          final wanted = mounted && request == _requestId && _image == null;
-          if (wanted) {
-            setState(() {
-              _replaceImage(preview.image);
-              _meta = preview.meta;
-              _focus = preview.focus;
-              _showingPreview = true;
-            });
-            _fitAfterLayout();
-            // Only now start on the neighbours: preloading earlier would have
-            // competed with the decode the user was actually waiting for.
-            _preloadAround(_index);
-          } else {
-            preview.image.dispose();
-          }
-        }
+      final preview = await RawDecoder.decodePreview(path);
+      if (!mounted || request != _requestId) {
+        preview?.image.dispose();
+        return;
+      }
+      if (preview != null) {
+        setState(() {
+          _replaceImage(preview.image);
+          _meta = preview.meta;
+          _focus = preview.focus;
+          _showingPreview = true;
+          _loading = false;
+        });
+        _fitAfterLayout();
+        // Only now start on the neighbours: preloading earlier would have
+        // competed with the decode the user was actually waiting for.
+        _preloadAround(_index);
+        return;
       }
     } catch (_) {
-      // Fall through to the full decode.
+      // Fall through — the full decode is the remaining option.
     }
 
+    // No usable embedded preview, so the full decode is the only way to put
+    // anything on screen. Not optional in this case.
+    await _decodeFull(path, request, refit: true);
+  }
+
+  /// Runs the full demosaic and swaps it in for the preview.
+  ///
+  /// Kept off the normal path: it costs 2-4 s against the preview's ~0.5 s,
+  /// and for judging focus and composition the preview is generally enough.
+  Future<void> _decodeFull(String path, int request,
+      {bool refit = false}) async {
+    setState(() {
+      _loading = true;
+      _decodingFull = true;
+      _error = null;
+    });
+
     try {
-      final decoded = await fullDecode;
+      final decoded = await RawDecoder.decode(path);
       if (!mounted || request != _requestId) {
         decoded.image.dispose();
         return;
       }
-      final hadPreview = _image != null;
       setState(() {
         _replaceImage(decoded.image);
         _meta = decoded.meta;
         _focus = decoded.focus;
         _showingPreview = false;
         _loading = false;
+        _decodingFull = false;
       });
-      // Only fit if the preview never arrived; refitting here would throw away
-      // any zoom or pan the user had already applied to the preview.
-      if (!hadPreview) _fitAfterLayout();
+      // Preserve zoom and pan otherwise: the user asked for detail at the
+      // place they were already looking.
+      if (refit) _fitAfterLayout();
     } catch (e) {
       if (!mounted || request != _requestId) return;
       setState(() {
         _error = e.toString();
         _loading = false;
+        _decodingFull = false;
       });
     }
+  }
+
+  void _requestFullDecode() {
+    if (_files.isEmpty || _decodingFull || !_showingPreview) return;
+    _decodeFull(_files[_index], _requestId);
   }
 
   /// Swaps in [next], releasing the GPU memory held by the outgoing image.
@@ -713,14 +733,23 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                    _showingPreview
-                        ? 'Preview — decoding full image…'
-                        : 'Decoding…',
+                Text(_decodingFull ? 'Full decode…' : 'Decoding…',
                     style: const TextStyle(
                         color: Colors.white54, fontSize: 12)),
               ],
             ),
+          if (_showingPreview && !_loading) ...[
+            const SizedBox(width: 12),
+            TextButton.icon(
+              onPressed: _requestFullDecode,
+              icon: const Icon(Icons.hd_outlined, size: 18),
+              label: const Text('Full decode'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white70,
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
           // Delete controls sit at the far end, well away from Previous/Next,
           // so a stray click while browsing cannot trash a frame.
           if (_files.isNotEmpty) ...[
@@ -882,7 +911,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
           if (_image != null)
             Text(
               '${_image!.width} × ${_image!.height} px\n'
-              'Scale: ${(_scale * 100).toStringAsFixed(0)}%',
+              'Scale: ${(_scale * 100).toStringAsFixed(0)}%\n'
+              '${_showingPreview ? "Camera preview" : "Full decode"}',
               style: const TextStyle(color: Colors.white38, fontSize: 10),
             ),
         ],

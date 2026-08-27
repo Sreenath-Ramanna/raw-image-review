@@ -96,7 +96,14 @@ nothing measurable. Verified by timing both built `.so` files from a pure-C
 harness. See the README's debug-vs-release table.
 
 Processing parameters are fixed: `use_camera_wb = 1`, `output_bps = 8`,
-`half_size = 0`, `no_auto_bright = 0`.
+`half_size = 0`, `no_auto_bright = 0`, `user_qual = 2` (PPG).
+
+PPG rather than LibRaw's default AHD, measured on a 33 MP CR3 at 1390 ms
+against 2081 ms. Demosaic is ~82% of the decode and is memory-bandwidth-bound
+(8 threads give only 2.07× over 1), so the algorithm is the only real lever.
+Median per-channel difference from AHD is 1/255, 90th percentile 6, max 174 —
+the tail concentrating on edges. Acceptable for keep-or-discard decisions,
+which is all this viewer is for.
 
 Free with `raw_free_result`.
 

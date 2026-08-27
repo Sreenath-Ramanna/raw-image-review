@@ -213,6 +213,15 @@ RawImageResult* raw_decode_file(const char* path) {
     lr->params.half_size       = 0;   /* full resolution                     */
     lr->params.no_auto_bright  = 0;
 
+    /* PPG rather than LibRaw's default AHD. Measured on a 33 MP CR3: 1390 ms
+     * against 2081 ms, a 1.5x saving on the step that is ~82% of the decode.
+     * The cost is small — median difference from AHD is 1/255 and the 90th
+     * percentile is 6 — though the tail lands on high-frequency edges, so a
+     * dedicated raw converter is still the right tool for final output.
+     * This viewer exists to judge keep-or-discard, where that does not matter.
+     * 0 linear, 1 VNG, 2 PPG, 3 AHD, 4 DCB, 11 DHT, 12 AAHD. */
+    lr->params.user_qual       = 2;
+
     if (libraw_open_file(lr, path) != LIBRAW_SUCCESS) {
         libraw_close(lr);
         return NULL;

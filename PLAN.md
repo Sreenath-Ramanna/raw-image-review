@@ -324,6 +324,20 @@ focused — the view a photographer actually wants first, to check critical shar
   image still on screen.
   **Cost: ~400–500 MB while browsing**, since previews are near-full-resolution (97–129 MB each).
   `_preloadRadius` trades memory against latency; 0 disables it.
+- [x] **9.5 Profile the full decode** — done 2026-08-27. On a 33 MP CR3: open 1 ms, unpack 192 ms,
+  **demosaic 1598 ms**, make_mem_image 158 ms. Demosaic is ~82% of it. Threading is already
+  near its ceiling — 8 threads give 2.07× over 1, so it is memory-bandwidth-bound, and 16 threads
+  buys only a further 12% on this machine. Nikon's unpack is single-threaded (596 ms at 1.0×) and
+  is inside LibRaw, not ours to fix.
+- [x] **9.6 Switch demosaic to PPG** — done. 1390 ms against AHD's 2081 ms on the same file, 1.5×.
+  Quality cost measured rather than assumed: median per-channel difference 1/255, 90th percentile
+  6, 99th 14, max 174, with 5.3% of samples differing by more than 8 — concentrated on
+  high-frequency edges. Fine for keep-or-discard; not for final output.
+- [x] **9.7 Make the full decode on-demand** — done. Browsing now shows only the embedded preview
+  (~0.5 s, ~99.7% of full resolution); the demosaic runs on a **Full decode** button. Files with no
+  usable embedded preview still decode automatically, since otherwise nothing would appear. The
+  EXIF panel says which is on screen. Zoom and pan are preserved across the swap — the user asked
+  for detail where they were already looking.
 - [ ] **9.4 Consider a smaller cached preview** — LibRaw also embeds 1620×1080 and 640×424
   previews. Using one of those for the neighbours would cut cache memory by ~95%, at the cost of a
   visible sharpen when the full decode lands. Worth it only if the memory becomes a problem.

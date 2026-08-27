@@ -138,6 +138,7 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 | **Open Folder** | Loads every RAW in the folder and shows the first |
 | **← / →**, or Previous / Next | Move through the folder |
 | **Del** | Same as the Delete button — obeys "Confirm delete" |
+| **Full decode** | Demosaics the sensor data; only needed for pixel-level scrutiny |
 | **Focus point** | Toggles the marker showing where the camera focused |
 | **Centre on focus** | Jumps back to 1:1 on the focus point |
 | **Fit to window** | Scales so the whole frame is visible |
@@ -183,16 +184,39 @@ and focal length; anything the file does not provide reads `—`.
 
 ## Performance
 
-Full decode is the slow part, and it dominates regardless of file size:
+Browsing shows the camera's **embedded preview**, which arrives in ~0.5 s and is
+roughly 99.7% of full resolution — the camera's own rendering of the frame, not
+a thumbnail. The full demosaic is 2–4 s and runs only when you press **Full
+decode**, because for judging focus and composition the preview is enough.
 
 | File | Preview | Full decode |
 |---|---|---|
-| Nikon Z 6_2 NEF (24 MP) | ~480 ms | ~2.5 s |
-| Canon EOS R7 CR3 (33 MP) | ~570 ms | ~2.8 s |
+| Nikon Z 6_2 NEF (24 MP) | ~480 ms | ~1.5 s |
+| Canon EOS R7 CR3 (33 MP) | ~570 ms | ~1.7 s |
 
-Metadata alone takes 1–5 ms, so the EXIF panel fills in immediately. The
-embedded preview is roughly 99.7% of full resolution on both bodies, so the
-first paint is near-full quality rather than a placeholder.
+Metadata alone takes 1–5 ms, so the EXIF panel fills in immediately. The panel's
+bottom corner says whether you are looking at the preview or a full decode.
+
+### Why the full decode costs what it does
+
+Measured on a 33 MP CR3:
+
+| phase | wall | parallelism |
+|---|---|---|
+| open | 1 ms | — |
+| unpack | 192 ms | 3.6× |
+| **demosaic** | **1598 ms** | 3.9× |
+| make_mem_image | 158 ms | 1× |
+
+Demosaic dominates. It is memory-bandwidth-bound rather than compute-bound —
+8 threads give only 2.07× over 1 — so throwing cores at it does not help.
+
+The viewer uses **PPG** demosaicing rather than LibRaw's default AHD: 1390 ms
+against 2081 ms on the same file, a 1.5× saving. The median per-channel
+difference from AHD is 1/255 and the 90th percentile is 6, though the tail lands
+on high-frequency edges. That trade suits a culling tool; use a dedicated raw
+converter for final output. Change `user_qual` in `src/libraw_wrapper.c` to pick
+a different algorithm.
 
 ### Debug vs release
 
