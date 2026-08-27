@@ -347,6 +347,33 @@ other EOS generations are untested — and because a wrong choice mirrors the
 point across the horizontal axis, which looks plausible rather than broken. See
 FOCUS_POINTS.md.
 
+### Preloading
+
+Stepping between images used to cost a full preview decode, ~0.5 s. The
+previous and next files are now decoded in the background while the user looks
+at the current one, so a step in either direction is instant.
+
+`preloadWindow()` is a free function — testable without a widget tree, like
+`fitScaleFor` and `indexAfterRemoval` — returning the indices to keep decoded.
+Anything outside that window is evicted and disposed.
+
+The subtle part is **ownership**. `_image` may point either at a cached preview,
+which the cache owns and may outlive the current view, or at a full decode,
+which the widget owns. `_imageFromCache` tracks which, and `_replaceImage`
+disposes only in the second case. Eviction has a matching rule: if the image
+being evicted is the one on screen, ownership transfers to the widget rather
+than disposing something the painter is about to read.
+
+Memory is the real cost. Previews are ~99.7% of full resolution, so each cached
+`ui.Image` is 97 MB (24 MP) to 129 MB (33 MP), and a three-entry window plus the
+current full decode sits around 400–500 MB. Caching the JPEG *bytes* instead
+would be almost free but pointless: extraction is only ~5 ms of the ~500 ms, and
+the decode is the expensive part, so only decoded images are worth holding.
+
+Preloading starts only once the current image is on screen — kicking it off
+earlier would put two more decodes in flight competing with the one the user is
+actually waiting for.
+
 ### Deleting
 
 `moveToTrash()` shells out to `gio trash` rather than calling `File.delete()`.

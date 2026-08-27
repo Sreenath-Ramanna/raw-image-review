@@ -150,6 +150,13 @@ Verified against Nikon Z 6_2 (NEF) and Canon EOS R7 (CR3) files with LibRaw
 The folder scan is not recursive, matches extensions case-insensitively, and
 sorts by name. The toolbar shows the position in the folder, e.g. `3 / 13`.
 
+The previous and next images are decoded in the background while you look at
+the current one, so stepping either way is instant rather than a ~0.5 s wait.
+That costs memory: previews are near-full-resolution, so each cached image is
+roughly 100–130 MB and browsing sits around 400–500 MB. Change
+`_preloadRadius` in `lib/src/viewer_screen.dart` to trade one against the
+other — 0 disables preloading entirely.
+
 ### Culling
 
 Delete moves the file to the desktop Trash via `gio trash` rather than

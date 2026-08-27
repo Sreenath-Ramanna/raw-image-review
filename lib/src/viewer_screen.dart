@@ -2,6 +2,7 @@
 //
 // Main application screen: browse button, image canvas, metadata panel.
 
+import 'dart:async' show unawaited;
 import 'dart:io'
     show Directory, File, Platform, Process, ProcessException, ProcessResult;
 import 'dart:math' as math;
@@ -75,6 +76,18 @@ Future<void> moveToTrash(String path) async {
   }
 }
 
+/// Indices worth keeping decoded when sitting on [index] — itself plus
+/// [radius] either side, clamped to the list.
+///
+/// Pure, so the window logic is testable without a widget tree.
+List<int> preloadWindow(int index, int length, {int radius = 1}) {
+  final out = <int>[];
+  for (var i = index - radius; i <= index + radius; i++) {
+    if (i >= 0 && i < length) out.add(i);
+  }
+  return out;
+}
+
 /// Which entry to show after removing the one at [removedIndex] from a list of
 /// [length] items. Null means nothing is left.
 ///
@@ -85,6 +98,14 @@ int? indexAfterRemoval({required int length, required int removedIndex}) {
   final remaining = length - 1;
   if (remaining <= 0) return null;
   return removedIndex.clamp(0, remaining - 1);
+}
+
+/// A decoded preview held in the cache, with the metadata that came with it.
+class _CachedPreview {
+  final ui.Image image;
+  final RawMeta meta;
+  final FocusPoint? focus;
+  const _CachedPreview(this.image, this.meta, this.focus);
 }
 
 class ViewerScreen extends StatefulWidget {
@@ -121,6 +142,21 @@ class _ViewerScreenState extends State<ViewerScreen> {
   /// mis-click and a file leaving the folder.
   bool _confirmDelete = true;
   bool _deleting = false;
+
+  /// How many files either side of the current one to keep decoded. 1 gives
+  /// the previous/current/next window, so a step in either direction is
+  /// instant. Raising it multiplies memory: each preview is very nearly
+  /// full resolution, so ~100–130 MB apiece.
+  static const int _preloadRadius = 1;
+
+  /// Decoded previews, keyed by file path. The cache owns these images; the
+  /// one currently on screen is tracked by [_imageFromCache] so it is never
+  /// disposed out from under the painter.
+  final Map<String, _CachedPreview> _previewCache = {};
+  final Set<String> _previewLoading = {};
+
+  /// True when [_image] belongs to [_previewCache] rather than to this state.
+  bool _imageFromCache = false;
 
   final FocusNode _keyboardFocus = FocusNode(debugLabel: 'viewer-keyboard');
 
@@ -164,7 +200,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   @override
   void dispose() {
-    _image?.dispose();
+    if (!_imageFromCache) _image?.dispose();
+    for (final entry in _previewCache.values) {
+      entry.image.dispose();
+    }
+    _previewCache.clear();
     _keyboardFocus.dispose();
     super.dispose();
   }
@@ -180,6 +220,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
     final files = rawFilesIn(Directory(picked));
     final folder = picked.split(Platform.pathSeparator).last;
+
+    // None of the previous folder's previews are reachable now.
+    _evictPreviewsOutside(const {});
 
     if (files.isEmpty) {
       setState(() {
@@ -242,6 +285,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
     }
     if (!mounted) return;
 
+    _dropCachedPreview(path);
+
     final nextIndex =
         indexAfterRemoval(length: _files.length, removedIndex: _index);
     final remaining = List<String>.of(_files)..removeAt(_index);
@@ -250,6 +295,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       // Nothing left. Bump the request id so any decode still in flight is
       // discarded rather than painting over the empty state.
       _requestId++;
+      _evictPreviewsOutside(const {});
       setState(() {
         _files = const [];
         _index = 0;
@@ -364,18 +410,28 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   Future<void> _decodeFile(String path) async {
     final request = ++_requestId;
+    final cached = _previewCache[path];
 
     setState(() {
       _loading = true;
       _error = null;
-      _replaceImage(null);
-      _meta = null;
-      _focus = null;
-      _showingPreview = false;
+      _showingPreview = cached != null;
       _fileName = path.split(Platform.pathSeparator).last;
       _scale = 1.0;
       _offset = Offset.zero;
+      // A preloaded neighbour is on screen with no wait at all; otherwise
+      // clear and fall through to decoding it.
+      _replaceImage(cached?.image, fromCache: cached != null);
+      _meta = cached?.meta;
+      _focus = cached?.focus;
     });
+
+    if (cached != null) {
+      _fitAfterLayout();
+      // Warm the new neighbours straight away — the user is already looking
+      // at this one, so nothing is competing for the wait.
+      _preloadAround(_index);
+    }
 
     // Start the full decode first so the preview runs alongside it rather than
     // delaying it.
@@ -384,21 +440,26 @@ class _ViewerScreenState extends State<ViewerScreen> {
     // The embedded preview is best-effort: not every file has one, and a
     // failure here must not stop the real decode.
     try {
-      final preview = await RawDecoder.decodePreview(path);
-      if (preview != null) {
-        // Every path that does not adopt the image must dispose it, including
-        // the case where the full decode somehow got there first.
-        final wanted = mounted && request == _requestId && _image == null;
-        if (wanted) {
-          setState(() {
-            _replaceImage(preview.image);
-            _meta = preview.meta;
-            _focus = preview.focus;
-            _showingPreview = true;
-          });
-          _fitAfterLayout();
-        } else {
-          preview.image.dispose();
+      if (cached == null) {
+        final preview = await RawDecoder.decodePreview(path);
+        if (preview != null) {
+          // Every path that does not adopt the image must dispose it, including
+          // the case where the full decode somehow got there first.
+          final wanted = mounted && request == _requestId && _image == null;
+          if (wanted) {
+            setState(() {
+              _replaceImage(preview.image);
+              _meta = preview.meta;
+              _focus = preview.focus;
+              _showingPreview = true;
+            });
+            _fitAfterLayout();
+            // Only now start on the neighbours: preloading earlier would have
+            // competed with the decode the user was actually waiting for.
+            _preloadAround(_index);
+          } else {
+            preview.image.dispose();
+          }
         }
       }
     } catch (_) {
@@ -432,9 +493,73 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   /// Swaps in [next], releasing the GPU memory held by the outgoing image.
-  void _replaceImage(ui.Image? next) {
-    _image?.dispose();
+  ///
+  /// Cached previews are owned by [_previewCache] and outlive the widget's
+  /// use of them, so they must not be disposed here — eviction does that.
+  void _replaceImage(ui.Image? next, {bool fromCache = false}) {
+    if (!_imageFromCache) _image?.dispose();
     _image = next;
+    _imageFromCache = fromCache;
+  }
+
+  /// Drops cached previews outside [keep], disposing them.
+  void _evictPreviewsOutside(Set<String> keep) {
+    final stale = _previewCache.keys.where((p) => !keep.contains(p)).toList();
+    for (final path in stale) {
+      final entry = _previewCache.remove(path)!;
+      if (identical(entry.image, _image)) {
+        // Still on screen — hand ownership to the widget rather than
+        // disposing an image the painter is about to read.
+        _imageFromCache = false;
+      } else {
+        entry.image.dispose();
+      }
+    }
+  }
+
+  void _dropCachedPreview(String path) =>
+      _evictPreviewsOutside(_previewCache.keys.where((p) => p != path).toSet());
+
+  /// Decodes previews for the files around [index] so a step either way is
+  /// instant, and evicts anything that has fallen outside the window.
+  void _preloadAround(int index) {
+    if (_files.isEmpty) return;
+    final window = preloadWindow(index, _files.length, radius: _preloadRadius);
+    final keep = {for (final i in window) _files[i]};
+    _evictPreviewsOutside(keep);
+
+    for (final i in window) {
+      final path = _files[i];
+      if (_previewCache.containsKey(path) || _previewLoading.contains(path)) {
+        continue;
+      }
+      unawaited(_cachePreview(path));
+    }
+  }
+
+  Future<void> _cachePreview(String path) async {
+    _previewLoading.add(path);
+    try {
+      final preview = await RawDecoder.decodePreview(path);
+      if (preview == null) return;
+
+      // The user may have moved on, or deleted the file, while this decoded.
+      final stillWanted = mounted &&
+          _files.isNotEmpty &&
+          preloadWindow(_index, _files.length, radius: _preloadRadius)
+              .any((i) => _files[i] == path);
+
+      if (!stillWanted || _previewCache.containsKey(path)) {
+        preview.image.dispose();
+        return;
+      }
+      _previewCache[path] =
+          _CachedPreview(preview.image, preview.meta, preview.focus);
+    } catch (_) {
+      // Preloading is best effort; the file is decoded again on arrival.
+    } finally {
+      _previewLoading.remove(path);
+    }
   }
 
   /// The canvas is not measurable until it has been laid out with the new

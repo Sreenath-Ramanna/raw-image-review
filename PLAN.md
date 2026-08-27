@@ -303,6 +303,33 @@ focused — the view a photographer actually wants first, to check critical shar
 
 ---
 
+## Phase 9 — Browsing speed
+
+- [x] **9.1 Move RGB→RGBA into C** — done 2026-08-27, then judged not worth pursuing further.
+  The wrapper already copied every pixel out of LibRaw's buffer, so widening during that pass
+  replaced the memcpy rather than adding a sweep. Measured: +17.6 ms on the C side, −64 ms on the
+  Dart side, **~46 ms net on a ~2350 ms decode**. That is inside the ±85 ms run-to-run variance of
+  LibRaw's demosaic, so it does not show end to end. Kept only because the output is byte-identical
+  and the Dart path is simpler.
+- [x] **9.2 Detect a stale `libraw_wrapper.so`** — the change above broke three tests because only
+  the release bundle had been rebuilt; old native code returning RGB against new Dart expecting
+  RGBA produced "Codec failed to produce an image". `_decodeInIsolate` now checks the contract and
+  names the rebuild command. `ffi_check`'s `sizeOf` assertions could not catch this: the struct
+  layout was unchanged and the drift was semantic.
+- [x] **9.3 Preload the previous and next previews** — done. A three-entry window
+  (`preloadWindow()`), decoded in the background once the current image is on screen, so stepping
+  either way is instant instead of ~0.5 s.
+  Ownership is the subtle part: `_image` may be a cache entry or a widget-owned full decode, so
+  `_imageFromCache` gates disposal, and eviction transfers ownership rather than disposing an
+  image still on screen.
+  **Cost: ~400–500 MB while browsing**, since previews are near-full-resolution (97–129 MB each).
+  `_preloadRadius` trades memory against latency; 0 disables it.
+- [ ] **9.4 Consider a smaller cached preview** — LibRaw also embeds 1620×1080 and 640×424
+  previews. Using one of those for the neighbours would cut cache memory by ~95%, at the cost of a
+  visible sharpen when the full decode lands. Worth it only if the memory becomes a problem.
+
+---
+
 ## Notes / decisions
 
 - LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and
