@@ -301,22 +301,16 @@ class RawDecoder {
     final result = resultPtr.ref;
     final w = result.width;
     final h = result.height;
-    final colors = result.colors; // 3 = RGB
-    final srcBytes = result.data.asTypedList(result.dataSize);
 
-    // LibRaw outputs RGB; Flutter needs RGBA.
-    final rgba = Uint8List(w * h * 4);
-    if (colors == 3) {
-      for (int i = 0, j = 0; i < w * h; i++, j += 3) {
-        rgba[i * 4]     = srcBytes[j];
-        rgba[i * 4 + 1] = srcBytes[j + 1];
-        rgba[i * 4 + 2] = srcBytes[j + 2];
-        rgba[i * 4 + 3] = 255;
-      }
-    } else {
-      // colors == 4: copy directly
-      rgba.setAll(0, srcBytes);
-    }
+    // The wrapper already widens to RGBA — it does so while copying the pixels
+    // out of LibRaw's buffer, so the conversion is close to free there and a
+    // ~30M-pixel loop here is avoided entirely.
+    //
+    // A copy is still needed: asTypedList is a view onto native memory that is
+    // freed below, and these bytes have to outlive the isolate. setAll on a
+    // typed source is a bulk move rather than an element loop.
+    final rgba = Uint8List(result.dataSize)
+      ..setAll(0, result.data.asTypedList(result.dataSize));
 
     bindings.freeResult(resultPtr);
 

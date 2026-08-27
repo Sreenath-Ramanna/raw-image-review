@@ -10,18 +10,19 @@
  */
 
 #include <libraw/libraw.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* ── Result struct returned to Dart ─────────────────────────────────────── */
 
 typedef struct {
-    unsigned char* data;   /* RGB or RGBA pixel bytes                       */
+    unsigned char* data;   /* RGBA pixel bytes, ready for Flutter           */
     int            width;
     int            height;
-    int            colors; /* 3 = RGB, 4 = RGBA                             */
-    int            bits;   /* 8 or 16 bits per channel                      */
-    int            data_size;
+    int            colors; /* always 4: the wrapper widens RGB before return */
+    int            bits;   /* always 8                                      */
+    int            data_size; /* width * height * 4                         */
 } RawImageResult;
 
 /* ── Embedded preview returned to Dart ──────────────────────────────────── */
@@ -182,7 +183,25 @@ int raw_read_focus(const char* path, RawFocusPoint* out) {
     return 0;
 }
 
-/* ── Decode a raw file to an 8-bit RGB bitmap ───────────────────────────── */
+/* ── Widen packed RGB to RGBA ───────────────────────────────────────────── */
+
+/* One 32-bit store per pixel rather than four byte stores. The destination
+ * comes from malloc and every offset is a multiple of 4, so the writes are
+ * aligned; -O3 vectorises this readily.
+ *
+ * The shift order assumes a little-endian host, which is what Flutter's
+ * PixelFormat.rgba8888 expects on x86-64 and aarch64 alike. */
+static void expand_rgb_to_rgba(const unsigned char* src, unsigned char* dst,
+                               size_t pixels) {
+    uint32_t* out = (uint32_t*)dst;
+    for (size_t i = 0; i < pixels; i++) {
+        const unsigned char* p = src + i * 3;
+        out[i] = 0xFF000000u | ((uint32_t)p[2] << 16) | ((uint32_t)p[1] << 8) |
+                 (uint32_t)p[0];
+    }
+}
+
+/* ── Decode a raw file to an 8-bit RGBA bitmap ──────────────────────────── */
 
 RawImageResult* raw_decode_file(const char* path) {
     libraw_data_t* lr = libraw_init(0);
@@ -223,12 +242,25 @@ RawImageResult* raw_decode_file(const char* path) {
         return NULL;
     }
 
+    /* Only 8-bit output is produced (output_bps is pinned to 8 above), and
+     * LibRaw emits 3 or 4 components. Anything else would silently misread the
+     * buffer, so refuse it rather than guess. */
+    if (img->bits != 8 || (img->colors != 3 && img->colors != 4)) {
+        free(result);
+        libraw_dcraw_clear_mem(img);
+        libraw_close(lr);
+        return NULL;
+    }
+
+    const size_t pixels = (size_t)img->width * (size_t)img->height;
+    const size_t rgba_size = pixels * 4;
+
     result->width      = img->width;
     result->height     = img->height;
-    result->colors     = img->colors;
-    result->bits       = img->bits;
-    result->data_size  = (int)img->data_size;
-    result->data       = (unsigned char*)malloc(img->data_size);
+    result->colors     = 4;            /* always RGBA leaving here */
+    result->bits       = 8;
+    result->data_size  = (int)rgba_size;
+    result->data       = (unsigned char*)malloc(rgba_size);
 
     if (!result->data) {
         free(result);
@@ -237,7 +269,15 @@ RawImageResult* raw_decode_file(const char* path) {
         return NULL;
     }
 
-    memcpy(result->data, img->data, img->data_size);
+    /* Expand to RGBA here rather than in Dart. This costs almost nothing: the
+     * bytes were already being copied out of LibRaw's buffer, so widening
+     * during that pass replaces the memcpy instead of adding a second sweep.
+     * It also spares Dart a full-image loop over ~30M pixels. */
+    if (img->colors == 3) {
+        expand_rgb_to_rgba(img->data, result->data, pixels);
+    } else {
+        memcpy(result->data, img->data, rgba_size);
+    }
 
     libraw_dcraw_clear_mem(img);
     libraw_close(lr);

@@ -10,7 +10,6 @@
 
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -134,22 +133,25 @@ void main(List<String> args) {
       problems++;
     }
 
-    // Reproduce the exact RGB->RGBA conversion from raw_decoder.dart.
-    final src = r.data.asTypedList(r.dataSize);
-    final w = r.width, h = r.height;
-    final rgba = Uint8List(w * h * 4);
-    if (r.colors == 3) {
-      for (int i = 0, j = 0; i < w * h; i++, j += 3) {
-        rgba[i * 4] = src[j];
-        rgba[i * 4 + 1] = src[j + 1];
-        rgba[i * 4 + 2] = src[j + 2];
-        rgba[i * 4 + 3] = 255;
-      }
-    } else {
-      rgba.setAll(0, src);
+    // The wrapper now returns RGBA directly; check that contract holds.
+    if (r.colors != 4 || r.bits != 8) {
+      print('    !! expected 8-bit RGBA, got colors=${r.colors} bits=${r.bits}');
+      problems++;
     }
-    print('    rgba ok, ${rgba.length} bytes, '
-        'px0=(${rgba[0]},${rgba[1]},${rgba[2]},${rgba[3]})');
+    final src = r.data.asTypedList(r.dataSize);
+    var opaque = true;
+    for (var i = 3; i < r.dataSize; i += 4 * 1024) {
+      if (src[i] != 255) {
+        opaque = false;
+        break;
+      }
+    }
+    if (!opaque) {
+      print('    !! alpha channel is not fully opaque');
+      problems++;
+    }
+    print('    rgba ok, ${r.dataSize} bytes, '
+        'px0=(${src[0]},${src[1]},${src[2]},${src[3]})');
 
     bindings.freeResult(resultPtr);
   }

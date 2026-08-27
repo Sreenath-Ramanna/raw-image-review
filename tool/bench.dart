@@ -54,21 +54,14 @@ void main(List<String> args) {
       h = r.height;
       final decodeMs = sw.elapsedMilliseconds;
 
-      // Exactly the loop in RawDecoder._decodeInIsolate.
+      // Exactly what RawDecoder._decodeInIsolate now does: the wrapper
+      // returns RGBA, so this is a bulk copy out of native memory rather than
+      // a per-pixel loop.
       final src = r.data.asTypedList(r.dataSize);
       final sw2 = Stopwatch()..start();
-      final rgba = Uint8List(w * h * 4);
-      if (r.colors == 3) {
-        for (int i = 0, j = 0; i < w * h; i++, j += 3) {
-          rgba[i * 4] = src[j];
-          rgba[i * 4 + 1] = src[j + 1];
-          rgba[i * 4 + 2] = src[j + 2];
-          rgba[i * 4 + 3] = 255;
-        }
-      } else {
-        rgba.setAll(0, src);
-      }
+      final rgba = Uint8List(r.dataSize)..setAll(0, src);
       sw2.stop();
+      if (rgba.length != r.dataSize) throw StateError('short copy');
 
       bindings.freeResult(resultPtr);
 
@@ -85,13 +78,13 @@ void main(List<String> args) {
     final mp = (w * h / 1e6).toStringAsFixed(1);
     print('${name.padRight(24)} ${mp.padLeft(5)} MP   '
         'C decode ${bestDecode.toString().padLeft(5)} ms   '
-        'RGB→RGBA ${bestConvert.toString().padLeft(4)} ms   '
+        'Dart copy ${bestConvert.toString().padLeft(4)} ms   '
         'total ${(bestDecode + bestConvert).toString().padLeft(5)} ms');
   }
 
   if (files > 0) {
     print('\nmean over $files files: C decode ${totalDecode ~/ files} ms, '
-        'RGB→RGBA ${totalConvert ~/ files} ms, '
+        'Dart copy ${totalConvert ~/ files} ms, '
         'total ${(totalDecode + totalConvert) ~/ files} ms');
   }
 }
