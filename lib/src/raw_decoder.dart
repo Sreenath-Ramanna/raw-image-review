@@ -302,6 +302,17 @@ class RawDecoder {
     final w = result.width;
     final h = result.height;
 
+    // Catches a stale libraw_wrapper.so: the struct layout is unchanged, so
+    // the mismatch would otherwise surface downstream as "Codec failed to
+    // produce an image" from a buffer three quarters the expected size.
+    if (result.colors != 4 || result.dataSize != w * h * 4) {
+      final detail = 'colors=${result.colors} dataSize=${result.dataSize}, '
+          'expected colors=4 dataSize=${w * h * 4}';
+      bindings.freeResult(resultPtr);
+      throw StateError('libraw_wrapper.so is out of date ($detail). '
+          'Rebuild it: flutter build linux');
+    }
+
     // The wrapper already widens to RGBA — it does so while copying the pixels
     // out of LibRaw's buffer, so the conversion is close to free there and a
     // ~30M-pixel loop here is avoided entirely.
