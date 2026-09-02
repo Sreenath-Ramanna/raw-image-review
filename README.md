@@ -301,3 +301,23 @@ It verifies the Dart and C struct layouts agree, then decodes each file and
 checks the buffer sizes and metadata are self-consistent.
 
 `test-images/` and `debug_images/` are gitignored local scratch directories.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
+
+### Third-party
+
+The MIT licence covers this repository's own source. A built application also
+contains, and is governed by the terms of:
+
+| component | licence |
+|---|---|
+| [LibRaw](https://www.libraw.org/) | LGPL-2.1-only **or** CDDL-1.0, with parts BSD-3-Clause |
+| [raw_images_api](https://github.com/Sreenath-Ramanna/raw_images_api) | MIT |
+| Flutter, `package:ffi` | BSD-3-Clause |
+| `package:file_picker` | MIT |
+
+LibRaw is the one with conditions attached. It is dynamically linked, so a
+recipient of a binary can replace it — which is what LGPL-2.1 §6 asks of
+anyone distributing one. Publishing source carries no such obligation.
