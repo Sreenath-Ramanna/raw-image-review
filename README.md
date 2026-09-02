@@ -1,7 +1,11 @@
 # raw_viewer
 
-A camera RAW image viewer for Linux desktop. Flutter for the UI, C for the
-decoding, joined by `dart:ffi`.
+A camera RAW image viewer for Linux desktop. Flutter for the UI,
+[raw_images_api](../raw_images_api) for the decoding, joined by `dart:ffi`.
+
+The RAW decoding, metadata reading and focus-point parsing live in a separate
+C library so that they can be reused and extended independently of this
+viewer. This repository is the UI on top of it.
 
 Open a folder of RAW files and browse it with the arrow keys. Each image opens
 at 1:1 centred on the camera's focus point, with its EXIF data alongside. The
@@ -13,6 +17,9 @@ the full demosaic runs in the background and replaces it a few seconds later.
 - Linux with GTK 3
 - Flutter SDK 3.0 or newer
 - LibRaw development headers
+- A [raw_images_api](../raw_images_api) checkout beside this one, or a path
+  given as `-DRAW_IMAGES_API_DIR=...`; it is built from source as part of the
+  Linux build
 
 Fedora:
 
@@ -66,8 +73,8 @@ flutter run -d linux
 
 `flutter run` is the better development loop: press `r` to hot-reload Dart
 changes without restarting, `q` to quit. Note that changes to
-`src/libraw_wrapper.c` are **not** picked up by hot reload — restart
-`flutter run`, or re-run `flutter build`, to recompile the native library.
+`raw_images_api` are **not** picked up by hot reload — restart `flutter run`,
+or re-run `flutter build`, to recompile the native library.
 
 ### Running the built binary
 
@@ -96,8 +103,9 @@ raw_viewer            # if ~/.local/bin is on your PATH
 ```
 
 The bundle contains the executable, `data/` (Flutter assets and ICU data), and
-`lib/` (the Flutter engine plus `libraw_wrapper.so`). `libraw_wrapper.so` is
-loaded lazily on the first image you open, not at startup.
+`lib/` (the Flutter engine plus `libraw_images_api.so`).
+`libraw_images_api.so` is loaded lazily on the first image you open, not at
+startup.
 
 ### Desktop entry and icon
 
@@ -215,8 +223,8 @@ The viewer uses **PPG** demosaicing rather than LibRaw's default AHD: 1390 ms
 against 2081 ms on the same file, a 1.5× saving. The median per-channel
 difference from AHD is 1/255 and the 90th percentile is 6, though the tail lands
 on high-frequency edges. That trade suits a culling tool; use a dedicated raw
-converter for final output. Change `user_qual` in `src/libraw_wrapper.c` to pick
-a different algorithm.
+converter for final output. The algorithm is `ria_decode_options.demosaic` in
+raw_images_api; this viewer takes that library's default.
 
 ### Debug vs release
 
@@ -231,9 +239,9 @@ Measured with `tool/bench.dart`, mean over three files, best of three passes:
 
 The Dart conversion loop is genuinely ~1.55× faster AOT-compiled, but it is only
 about 8% of the work, so end-to-end decode is unchanged. The C decode does not
-improve either: `libraw_wrapper.c` is a thin shim and all the real work happens
-inside the distribution's prebuilt `libraw.so`, which is the same binary in both
-builds — so `-O3` on ~230 lines of glue buys nothing. The difference between
+improve either: the decode path through raw_images_api is thin glue and all
+the real work happens inside the distribution's prebuilt `libraw.so`, which is
+the same binary in both builds — so `-O3` on the glue buys nothing. The difference between
 the two runs above is run-to-run noise, confirmed by timing both `.so` files
 from a pure-C harness.
 
@@ -243,21 +251,21 @@ start — just not for decode throughput.
 To reproduce:
 
 ```bash
-dart run tool/bench.dart build/linux/x64/debug/bundle/lib/libraw_wrapper.so test-images/*.NEF
+dart run tool/bench.dart build/linux/x64/debug/bundle/lib/libraw_images_api.so test-images/*.NEF
 dart compile exe tool/bench.dart -o /tmp/bench
-/tmp/bench build/linux/x64/release/bundle/lib/libraw_wrapper.so test-images/*.NEF
+/tmp/bench build/linux/x64/release/bundle/lib/libraw_images_api.so test-images/*.NEF
 ```
 
 ## Layout
 
 ```
-src/libraw_wrapper.c        C wrapper over LibRaw -> libraw_wrapper.so
+../raw_images_api/          the RAW decoding and processing library (C)
 lib/src/libraw_bindings.dart  dart:ffi structs and symbol lookups
 lib/src/raw_decoder.dart      isolate decoding, pixel conversion, orientation
 lib/src/focus_point.dart      AF coordinate mapping (no dart:ui, so tool/ can use it)
 lib/src/viewer_screen.dart    toolbar, image canvas, EXIF panel
 lib/main.dart                 app entry point
-linux/CMakeLists.txt          Flutter runner plus the raw_wrapper target
+linux/CMakeLists.txt          Flutter runner; builds raw_images_api as a subdirectory
 tool/ffi_check.dart           drives the .so through the real bindings, no UI
 tool/bench.dart               times the C decode and the Dart conversion separately
 tool/make_icon.py             regenerates the app icon at every size
@@ -265,7 +273,8 @@ linux/packaging/              .desktop entry template
 scripts/setup.sh              dependency installation
 ```
 
-`DESIGN.md` describes the C API, the Dart wrapper and the UI in detail.
+`DESIGN.md` describes the Dart wrapper and the UI in detail; the C API it
+sits on is documented in `../raw_images_api/API.md`.
 `FOCUS_POINTS.md` documents how Canon and Nikon store focus point data.
 `PLAN.md` tracks completed and outstanding work.
 
@@ -276,16 +285,16 @@ flutter analyze
 flutter test
 ```
 
-`test/preview_orientation_test.dart` needs a built `libraw_wrapper.so` and RAW
-files in `test-images/`; it skips itself when either is missing. The other tests
+`test/preview_orientation_test.dart` needs a built `libraw_images_api.so` and
+RAW files in `test-images/`; it skips itself when either is missing. The other tests
 have no such requirement.
 
-To exercise the native layer without the UI — useful after touching the C
-wrapper — run:
+To exercise the native layer without the UI — useful after touching
+raw_images_api — run:
 
 ```bash
 dart run tool/ffi_check.dart \
-  build/linux/x64/debug/bundle/lib/libraw_wrapper.so test-images/*.NEF
+  build/linux/x64/debug/bundle/lib/libraw_images_api.so test-images/*.NEF
 ```
 
 It verifies the Dart and C struct layouts agree, then decodes each file and
