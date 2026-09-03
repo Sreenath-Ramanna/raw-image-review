@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ria_ref:
+        description: Ref of raw_images_api to build against
+        default: master
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.41.9
+  RIA_REF: ${{ github.event.inputs.ria_ref || 'master' }}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+
+      # test-images/ is hundreds of megabytes of camera output and is not in
+      # version control, so the tests that want a real file skip themselves.
+      - run: flutter test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out raw_images_api
+        uses: actions/checkout@v4
+        with:
+          repository: Sreenath-Ramanna/raw_images_api
+          ref: ${{ env.RIA_REF }}
+          path: _deps/raw_images_api
+          # Only needed if the library repository is ever made private.
+          token: ${{ secrets.RIA_TOKEN || github.token }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libraw-dev cmake ninja-build pkg-config clang libgtk-3-dev libomp-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Build the release bundle
+        env:
+          RAW_IMAGES_API_DIR: ${{ github.workspace }}/_deps/raw_images_api
+        run: flutter build linux --release
+
+      # This app is the legacy consumer: it looks up the pre-extraction raw_*
+      # ABI, which lives in raw_images_api's src/ria_legacy.c and is compiled
+      # -fvisibility=default on purpose. That library is a different repository
+      # and does not have this app in its tree, so a symbol quietly dropped
+      # there fails nowhere until here — and then only at runtime, on the
+      # dlopen lookup, since the .so is loaded by name rather than linked in.
+      - name: The legacy raw_* ABI is still exported
+        run: |
+          LIB=build/linux/x64/release/bundle/lib/libraw_images_api.so
+          test -x build/linux/x64/release/bundle/raw_viewer
+          test -f "$LIB"
+          exported=$(nm -D --defined-only "$LIB" | awk '{print $NF}' | sort -u)
+          missing=0
+          # Every raw_* string literal in lib/ is a symbol the bindings look up.
+          for sym in $(grep -rhoE "'raw_[a-z0-9_]+'" lib/ | tr -d "'" | sort -u); do
+            if grep -qx -- "$sym" <<<"$exported"; then
+              echo "  ok       $sym"
+            else
+              echo "  MISSING  $sym"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing legacy symbol(s) absent — raw_images_api dropped part of the raw_* ABI."
+            exit 1
+          fi
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw_viewer-linux-x64
+          path: build/linux/x64/release/bundle/
+          retention-days: 7
