@@ -1,4 +1,4 @@
-// Integration test: needs the built libraw_wrapper.so and the local
+// Integration test: needs the built libraw_images_api.so and the local
 // test-images/ files, so it skips itself when either is absent.
 //
 // The embedded preview is stored unrotated while dcraw_process bakes the
@@ -13,7 +13,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:raw_viewer/src/raw_decoder.dart';
 
-const _soPath = 'build/linux/x64/debug/bundle/lib/libraw_wrapper.so';
+const _soPath = 'build/linux/x64/debug/bundle/lib/libraw_images_api.so';
 const _images = 'test-images';
 
 String _orientation(int w, int h) =>

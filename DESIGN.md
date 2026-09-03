@@ -10,7 +10,7 @@ How the three layers fit together, and why they are arranged this way.
 ├─────────────────────────────────────────────────────────────┤
 │  libraw_bindings.dart    structs · symbol lookups           │  dart:ffi, no framework
 ├─────────────────────────────────────────────────────────────┤
-│  libraw_wrapper.so       raw_decode_file · raw_read_meta …  │  C
+│  libraw_images_api.so    raw_decode_file · raw_read_meta …  │  C, separate repo
 ├─────────────────────────────────────────────────────────────┤
 │  LibRaw 0.22.2                                              │  system library
 └─────────────────────────────────────────────────────────────┘
@@ -23,142 +23,39 @@ inside a worker isolate.
 
 ---
 
-## 1. The C layer — `src/libraw_wrapper.c`
+## 1. The C layer — `raw_images_api`
 
-A thin translation layer over LibRaw's C API, built as a standalone shared
-library (`libraw_wrapper.so`) and loaded at runtime with `dlopen`. It is **not**
-linked into the Flutter runner.
+Extracted into its own repository so that the decoding and processing can grow
+without dragging a Flutter app behind it. Full documentation is in
+`../raw_images_api/API.md`; what matters here is the shape of the seam.
 
-It exists to flatten LibRaw's large `libraw_data_t` into a handful of structs
-with a stable, FFI-friendly layout. Describing `libraw_data_t` to Dart directly
-would mean mirroring hundreds of fields and re-checking them on every LibRaw
-release.
+The viewer binds the **legacy `raw_*` ABI** that library still exports — the
+one this repo's `libraw_bindings.dart` was written against — rather than the
+newer `ria_*` API. Four entry points:
 
-### Design rules
+| symbol | cost | what the viewer does with it |
+|---|---|---|
+| `raw_read_meta` | 1–5 ms | fills the EXIF panel immediately |
+| `raw_read_focus` | 1–5 ms | opens the frame 1:1 on the focus point |
+| `raw_decode_thumb` | 3–7 ms | the embedded JPEG, on screen in ~0.5 s |
+| `raw_decode_file` | 1.5–3 s | the full demosaic, on demand |
 
-- **Every function returns a pointer or an int; never a struct by value.**
-  Struct-return ABI is the fiddliest thing to get right across FFI.
-- **Every allocation has a matching free function.** The caller owns what it
-  receives and must return it.
-- **`NULL` means failure.** No error strings today; see *Known gaps*.
-- **The structs are append-only.** Fields are added at the end, because
-  inserting one silently corrupts every field after it on the Dart side.
+Three properties of that ABI shape everything above it:
 
-### Data structures
+- **Every function returns a pointer or an int, never a struct by value**, and
+  every allocation has a matching free function. Struct-return ABI is the
+  fiddliest thing to get right across FFI.
+- **`NULL` means failure, with no detail.** The `ria_*` API this now sits on
+  does return typed errors; adopting them means rewriting
+  `libraw_bindings.dart` against the newer structs. See *Known gaps*.
+- **`raw_decode_file` returns pixels with the camera rotation already applied;
+  `raw_decode_thumb` does not.** This asymmetry is the single most error-prone
+  thing in the codebase and is handled in Dart — see *Orientation* below.
 
-```c
-typedef struct {
-    unsigned char* data;      /* pixel bytes, tightly packed        */
-    int width, height;
-    int colors;               /* 3 = RGB, 4 = RGBA                  */
-    int bits;                 /* bits per channel; always 8 today   */
-    int data_size;            /* width * height * colors * bits/8   */
-} RawImageResult;             /* 32 bytes */
-
-typedef struct {
-    unsigned char* data;      /* JPEG stream, or raw RGB            */
-    int data_size;
-    int format;               /* 1 = JPEG, 2 = uncompressed RGB     */
-    int width, height;
-    int flip;                 /* orientation, NOT yet applied       */
-} RawThumbResult;             /* 32 bytes */
-
-typedef struct {
-    char  make[64];
-    char  model[64];
-    float iso_speed;
-    float shutter;            /* seconds                            */
-    float aperture;
-    float focal_len;
-    int   width, height;      /* as displayed, orientation applied  */
-    int   flip;
-} RawImageMeta;               /* 156 bytes */
-```
-
-Sizes are listed because `tool/ffi_check.dart` asserts them against
-`sizeOf<...>()` on the Dart side at startup. That check is the cheapest possible
-guard against layout drift, which otherwise shows up as plausible-looking
-garbage rather than a crash.
-
-### API
-
-#### `RawImageResult* raw_decode_file(const char* path)`
-
-Full decode: `libraw_open_file` → `libraw_unpack` → `libraw_dcraw_process` →
-`libraw_dcraw_make_mem_image`. Returns 8-bit RGB at full resolution with the
-camera white balance applied, or `NULL` on any failure.
-
-**Costs ~2.5 s** for a 24–33 MP frame. This is inherent to demosaicing, not
-overhead that can be tuned away — and notably it is the *same* in debug and
-release builds. All the work happens inside the distribution's prebuilt
-`libraw.so`; `libraw_wrapper.c` is a shim, so compiling it `-O3` changes
-nothing measurable. Verified by timing both built `.so` files from a pure-C
-harness. See the README's debug-vs-release table.
-
-Processing parameters are fixed: `use_camera_wb = 1`, `output_bps = 8`,
-`half_size = 0`, `no_auto_bright = 0`, `user_qual = 2` (PPG).
-
-PPG rather than LibRaw's default AHD, measured on a 33 MP CR3 at 1390 ms
-against 2081 ms. Demosaic is ~82% of the decode and is memory-bandwidth-bound
-(8 threads give only 2.07× over 1), so the algorithm is the only real lever.
-Median per-channel difference from AHD is 1/255, 90th percentile 6, max 174 —
-the tail concentrating on edges. Acceptable for keep-or-discard decisions,
-which is all this viewer is for.
-
-Free with `raw_free_result`.
-
-#### `int raw_read_meta(const char* path, RawImageMeta* out)`
-
-Fills a caller-allocated struct. Returns 0 on success, -1 on failure.
-
-Calls `libraw_open_file` **only** — no unpack, no process — which is why it
-costs **1–5 ms**. The UI uses this to populate the EXIF panel immediately.
-
-It transposes `width`/`height` when `flip` is 5 or 6. LibRaw's
-`sizes.width`/`height` describe the *unrotated sensor area*, but
-`dcraw_process` bakes the camera orientation into its output, so a portrait
-frame decodes transposed. Reporting the sensor values made every portrait shot
-claim landscape dimensions. `sizes.flip` is populated by `open_file` alone, so
-this stays cheap.
-
-#### `RawThumbResult* raw_decode_thumb(const char* path)`
-
-Extracts the camera's embedded preview via `libraw_unpack_thumb`. **Costs
-3.5–6.6 ms** measured across the test images — it is a file read and a memcpy,
-not a decode. Essentially all of the ~500 ms preview wall-clock time is JPEG
-decoding and orientation handling on the Dart side, so that is where to look if
-the fast path ever needs to be faster.
-
-Both tested bodies embed a preview at ~99.7% of full resolution — 6048×4024 in a
-6064×4040 NEF — so this is near-full quality, not a thumbnail. LibRaw returns the
-largest embedded preview; smaller ones (1620×1080, 640×424) are enumerable
-through `libraw_data_t.thumbs_list` if a faster first paint is ever wanted.
-
-The JPEG is returned **undecoded**. Flutter decodes JPEG natively, so doing it
-here would mean a libjpeg dependency for no benefit. Only `JPEG` and `BITMAP`
-previews are handled; other formats return `NULL`, since the full decode is on
-its way regardless.
-
-`flip` is returned but **not applied** — the preview is stored unrotated. This
-asymmetry with `raw_decode_file` is the single most error-prone thing in the
-codebase and is handled in Dart.
-
-Free with `raw_free_thumb`.
-
-#### `void raw_free_result(RawImageResult*)` / `void raw_free_thumb(RawThumbResult*)`
-
-Free the buffer and the struct. Both tolerate `NULL`.
-
-### Verifying it
-
-`/tmp/leak_probe.c` (not in the repo) cycles decode+preview while sampling
-`VmRSS`. Last run: flat at 12 MB across six passes of a 33 MP CR3, each
-allocating ~98 MB. Worth re-running after touching allocation paths.
-
-`tool/bench.dart` times the C decode and the Dart RGB→RGBA loop separately, and
-can be run JIT or AOT-compiled to compare debug against release behaviour. Note
-that `dart run` disables asserts, so the usual assert-based JIT probe mislabels
-the runtime — the tool reads `dart.vm.product` instead.
+`tool/ffi_check.dart` asserts the Dart struct sizes against the C ones
+(`RawImageResult` 32 bytes, `RawImageMeta` 156) at startup. That check is the
+cheapest possible guard against layout drift, which otherwise shows up as
+plausible-looking garbage rather than a crash.
 
 ---
 
@@ -178,11 +75,11 @@ final class RawImageMetaNative extends Struct {
 }
 ```
 
-`LibRawBindings.open(soPath)` resolves all five symbols eagerly, so a
+`LibRawBindings.open(soPath)` resolves all six symbols eagerly, so a
 mismatched `.so` fails at load with a clear error rather than at first use.
 
-**Field order and type must match the C struct exactly.** There is no compiler
-checking this across the boundary. `tool/ffi_check.dart` compares `sizeOf<>()`
+**Field order and type must match `raw_images_api_legacy.h` exactly.** There
+is no compiler checking this across the boundary. `tool/ffi_check.dart` compares `sizeOf<>()`
 against the expected byte counts, which catches the common mistakes: a field
 inserted mid-struct, `Int32` where C has `Int64`, a missing `@Array` length.
 
@@ -431,12 +328,15 @@ user who has already zoomed does not have it thrown away.
 
 ## Known gaps
 
-- **No error detail.** The C layer returns `NULL` for every failure, so the UI
-  can only say "failed to decode". Returning the LibRaw error code and mapping
-  it through `libraw_strerror` would fix this.
-- **16-bit output is dead code.** `output_bps` is hardcoded to 8; the `bits`
-  field is carried through but never anything else, and the Dart conversion
-  assumes 8.
+- **No error detail.** The legacy ABI returns `NULL` for every failure, so the
+  UI can only say "failed to decode". `raw_images_api` reports typed errors
+  through `ria_status`; using them means porting `libraw_bindings.dart` to the
+  `ria_*` structs.
+- **16-bit output is unused.** The library decodes to 16 bits on request, but
+  this viewer pins 8 through the legacy ABI and the Dart side assumes it.
+- **The processing operations are unused.** `raw_images_api` can adjust
+  exposure, contrast and colour, resize and sharpen; none of that is wired to
+  the UI yet.
 - **`colors == 4` is untested.** LibRaw returns 3 for every file tried, so that
   branch of the RGB→RGBA conversion has never executed.
 - **180° preview rotation is undetectable.** See *Orientation* above.

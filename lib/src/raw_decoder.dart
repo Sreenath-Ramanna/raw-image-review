@@ -112,7 +112,7 @@ class RawDecoder {
     final override = libraryPathOverride;
     if (override != null) return override;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    return '$exeDir/lib/libraw_wrapper.so';
+    return '$exeDir/lib/libraw_images_api.so';
   }
 
   /// Decodes the camera's embedded preview — a near-full-resolution JPEG on
@@ -302,14 +302,14 @@ class RawDecoder {
     final w = result.width;
     final h = result.height;
 
-    // Catches a stale libraw_wrapper.so: the struct layout is unchanged, so
+    // Catches a stale libraw_images_api.so: the struct layout is unchanged, so
     // the mismatch would otherwise surface downstream as "Codec failed to
     // produce an image" from a buffer three quarters the expected size.
     if (result.colors != 4 || result.dataSize != w * h * 4) {
       final detail = 'colors=${result.colors} dataSize=${result.dataSize}, '
           'expected colors=4 dataSize=${w * h * 4}';
       bindings.freeResult(resultPtr);
-      throw StateError('libraw_wrapper.so is out of date ($detail). '
+      throw StateError('libraw_images_api.so is out of date ($detail). '
           'Rebuild it: flutter build linux');
     }
 

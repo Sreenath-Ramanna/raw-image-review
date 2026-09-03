@@ -1,7 +1,7 @@
 // Smoke test for the RAW viewer shell.
 //
 // Only covers the pre-decode state: anything past "Open RAW" needs a real
-// RAW file and the native libraw_wrapper.so, which is out of scope for a
+// RAW file and the native libraw_images_api.so, which is out of scope for a
 // widget test.
 
 import 'package:flutter/material.dart';

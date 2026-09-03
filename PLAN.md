@@ -346,7 +346,28 @@ focused — the view a photographer actually wants first, to check critical shar
 
 ## Notes / decisions
 
-- LibRaw is linked via `pkg-config libraw`; the wrapper is plain C, built as a shared lib and
-  loaded at runtime from `$ORIGIN/lib/libraw_wrapper.so`.
+- RAW decoding lives in the separate `raw_images_api` repository (plain C over LibRaw), built
+  from source by `linux/CMakeLists.txt` and loaded at runtime from
+  `$ORIGIN/lib/libraw_images_api.so`. Entries above that mention `libraw_wrapper.c` or
+  `libraw_wrapper.so` describe the code as it was before that extraction.
 - Decode runs in `Isolate.run` so the UI thread stays free; the `ui.Image` must be built back on
   the main isolate (`ui.decodeImageFromPixels`), which is why the isolate returns raw RGBA bytes.
+
+---
+
+## Phase 10 — Extraction
+
+- [x] **10.1 Move the native layer into `raw_images_api`** — done 2026-09-02. The decoding,
+  metadata, preview extraction and Canon/Nikon AF parsing now live in their own repository and
+  their own library, so photo processing can be built on them without a Flutter app in the way.
+  `src/libraw_wrapper.c` is gone; `linux/CMakeLists.txt` builds the library as a subdirectory and
+  installs `libraw_images_api.so` into the bundle.
+  The viewer was **not** ported to the new `ria_*` API: the library still exports the old `raw_*`
+  ABI, so `libraw_bindings.dart` and its struct mirrors are untouched and `tool/ffi_check.dart`
+  proves the two agree. That kept the extraction to a change of filename on this side.
+- [ ] **10.2 Port the Dart bindings to the `ria_*` API** — would buy typed errors in the UI
+  (`ria_status` instead of `NULL`), 16-bit decoding, and access to the processing operations.
+  Requires rewriting the struct mirrors in `libraw_bindings.dart` and the `sizeOf` assertions in
+  `tool/ffi_check.dart`.
+- [ ] **10.3 Wire up enhancement controls** — exposure, contrast, shadows/highlights, vibrance and
+  sharpening all exist in the library now. Blocked on 10.2.

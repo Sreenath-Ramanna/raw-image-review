@@ -1,7 +1,11 @@
 // lib/src/libraw_bindings.dart
 //
-// dart:ffi bindings to libraw_wrapper.so.
-// Matches the structs and function signatures in src/libraw_wrapper.c.
+// dart:ffi bindings to libraw_images_api.so.
+//
+// These mirror the legacy raw_* ABI, which raw_images_api still exports for
+// this consumer — see its include/raw_images_api_legacy.h. Field order and
+// type must match that header exactly; nothing checks it across the boundary
+// but tool/ffi_check.dart.
 
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';

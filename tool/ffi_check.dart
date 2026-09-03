@@ -1,9 +1,9 @@
-// Dev tool: verifies libraw_bindings.dart against the real libraw_wrapper.so
+// Dev tool: verifies libraw_bindings.dart against the real libraw_images_api.so
 // without needing the Flutter UI. Exercises the struct marshalling — a field
 // offset mismatch between Dart and C shows up here as garbage values.
 //
 // Usage:
-//   dart run tool/ffi_check.dart <path-to-libraw_wrapper.so> <raw-file>...
+//   dart run tool/ffi_check.dart <path-to-libraw_images_api.so> <raw-file>...
 
 // This is a command-line diagnostic; stdout is its entire purpose.
 // ignore_for_file: avoid_print

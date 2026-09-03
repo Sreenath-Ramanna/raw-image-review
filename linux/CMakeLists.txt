@@ -1,7 +1,7 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.13)
-# C is enabled in addition to CXX because the LibRaw wrapper (src/libraw_wrapper.c)
-# is plain C.
+# C is enabled in addition to CXX because raw_images_api, built as a
+# subdirectory below, is plain C.
 project(runner LANGUAGES CXX C)
 
 # The name of the executable created for the application. Change this to change
@@ -56,19 +56,45 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
-# === LibRaw decode wrapper ===
-# Built as a standalone shared library and loaded at runtime via dart:ffi from
-# $ORIGIN/lib/libraw_wrapper.so — it is deliberately NOT linked into the runner.
-pkg_check_modules(LIBRAW REQUIRED IMPORTED_TARGET libraw)
+# === raw_images_api ===
+# The RAW decoding and image processing library, developed as its own
+# repository. It is built from source here and loaded at runtime via dart:ffi
+# from $ORIGIN/lib/libraw_images_api.so — deliberately NOT linked into the
+# runner, so that a Dart-side change never requires relinking the app.
+#
+# The default assumes it sits next to raw_viewer. To use a checkout
+# elsewhere, set the environment variable — `flutter build` drives CMake
+# itself and gives no way to pass -D through:
+#
+#   RAW_IMAGES_API_DIR=/path/to/raw_images_api flutter build linux --release
+#
+# Configuring CMake directly, -DRAW_IMAGES_API_DIR=... works as usual.
+if(DEFINED ENV{RAW_IMAGES_API_DIR})
+  set(_raw_images_api_default "$ENV{RAW_IMAGES_API_DIR}")
+else()
+  set(_raw_images_api_default "${CMAKE_CURRENT_SOURCE_DIR}/../../raw_images_api")
+endif()
+set(RAW_IMAGES_API_DIR "${_raw_images_api_default}"
+    CACHE PATH "Path to the raw_images_api source checkout")
 
-add_library(raw_wrapper SHARED
-  "${CMAKE_CURRENT_SOURCE_DIR}/../src/libraw_wrapper.c"
-)
-# apply_standard_settings() is intentionally not used here: it forces a C++
-# standard, which does not apply to a C target.
-target_compile_options(raw_wrapper PRIVATE -Wall)
-target_compile_options(raw_wrapper PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
-target_link_libraries(raw_wrapper PRIVATE PkgConfig::LIBRAW m)
+if(NOT EXISTS "${RAW_IMAGES_API_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR
+    "raw_images_api was not found at ${RAW_IMAGES_API_DIR}.\n"
+    "Clone it beside this repository, or configure with "
+    "-DRAW_IMAGES_API_DIR=<path>.")
+endif()
+
+# The app needs the library alone; its tool, tests and install rules would
+# only add build time and clutter the bundle.
+set(RIA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(RIA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(RIA_INSTALL        OFF CACHE BOOL "" FORCE)
+# The Dart FFI bindings in lib/src/libraw_bindings.dart still speak the
+# pre-extraction raw_* ABI, which the library keeps exporting for exactly
+# this reason.
+set(RIA_BUILD_LEGACY_ABI ON CACHE BOOL "" FORCE)
+
+add_subdirectory("${RAW_IMAGES_API_DIR}" "${CMAKE_BINARY_DIR}/raw_images_api")
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -76,8 +102,8 @@ add_subdirectory("runner")
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
-# Ensure the wrapper is built whenever the app is.
-add_dependencies(${BINARY_NAME} raw_wrapper)
+# Ensure the decode library is built whenever the app is.
+add_dependencies(${BINARY_NAME} raw_images_api)
 
 # Only the install-generated bundle's copy of the executable will launch
 # correctly, since the resources must in the right relative locations. To avoid
@@ -112,9 +138,10 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
-# Place libraw_wrapper.so in bundle/lib/ so the $ORIGIN/lib RPATH — and
-# RawDecoder._soPath on the Dart side — resolve it.
-install(TARGETS raw_wrapper LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+# Place libraw_images_api.so in bundle/lib/ so the $ORIGIN/lib RPATH — and
+# RawDecoder._soPath on the Dart side — resolve it. The versioned file and
+# its two symlinks are all installed; Dart opens the unversioned name.
+install(TARGETS raw_images_api LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
