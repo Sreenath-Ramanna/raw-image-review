@@ -4,7 +4,14 @@
 
 import 'dart:async' show unawaited;
 import 'dart:io'
-    show Directory, File, Platform, Process, ProcessException, ProcessResult;
+    show
+        Directory,
+        File,
+        FileSystemException,
+        Platform,
+        Process,
+        ProcessException,
+        ProcessResult;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -76,6 +83,52 @@ Future<void> moveToTrash(String path) async {
   }
 }
 
+/// Subfolder that Select moves a keeper into, created beside the originals.
+const String kSelectedFolderName = 'selected';
+
+/// A name no file in [dir] is using yet: [name] itself, then `stem (2).ext`,
+/// `stem (3).ext` and so on.
+///
+/// Selecting the same filename twice happens whenever two cards are culled
+/// into one folder, and silently overwriting the first frame would lose it.
+String freeNameIn(Directory dir, String name) {
+  final sep = Platform.pathSeparator;
+  if (!File('${dir.path}$sep$name').existsSync()) return name;
+
+  final dot = name.lastIndexOf('.');
+  final stem = dot < 0 ? name : name.substring(0, dot);
+  final ext = dot < 0 ? '' : name.substring(dot);
+  for (var n = 2;; n++) {
+    final candidate = '$stem ($n)$ext';
+    if (!File('${dir.path}$sep$candidate').existsSync()) return candidate;
+  }
+}
+
+/// Moves [path] into the `selected` subfolder of the folder it sits in,
+/// creating that folder on first use. Returns where the file ended up.
+///
+/// A move, not a copy: the frame leaves the browsing list, and a second copy
+/// on disk would be culled all over again on the next pass.
+Future<String> moveToSelected(String path) async {
+  final file = File(path);
+  final target = Directory(
+      '${file.parent.path}${Platform.pathSeparator}$kSelectedFolderName');
+  if (!target.existsSync()) target.createSync();
+
+  final name = path.split(Platform.pathSeparator).last;
+  final dest =
+      '${target.path}${Platform.pathSeparator}${freeNameIn(target, name)}';
+  try {
+    await file.rename(dest);
+  } on FileSystemException {
+    // rename() cannot cross a filesystem, which `selected` does when it is a
+    // symlink or a mount point rather than a plain subfolder.
+    await file.copy(dest);
+    await file.delete();
+  }
+  return dest;
+}
+
 /// Indices worth keeping decoded when sitting on [index] — itself plus
 /// [radius] either side, clamped to the list.
 ///
@@ -143,6 +196,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   /// mis-click and a file leaving the folder.
   bool _confirmDelete = true;
   bool _deleting = false;
+  bool _selecting = false;
 
   /// How many files either side of the current one to keep decoded. 1 gives
   /// the previous/current/next window, so a step in either direction is
@@ -260,7 +314,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   /// Trashes the current file and drops it from the list, so Previous/Next
   /// never try to load it again.
   Future<void> _deleteCurrent() async {
-    if (_files.isEmpty || _deleting) return;
+    if (_files.isEmpty || _deleting || _selecting) return;
 
     final path = _files[_index];
     final name = path.split(Platform.pathSeparator).last;
@@ -286,6 +340,44 @@ class _ViewerScreenState extends State<ViewerScreen> {
     }
     if (!mounted) return;
 
+    setState(() => _deleting = false);
+    _dropCurrentFile(path);
+  }
+
+  /// Moves the current file into the `selected` subfolder and drops it from
+  /// the list, the same way a delete does.
+  ///
+  /// No confirmation: unlike Delete this is reversible with a drag in the
+  /// file manager, and the whole point is to be fast enough to use on every
+  /// keeper in a shoot.
+  Future<void> _selectCurrent() async {
+    if (_files.isEmpty || _deleting || _selecting) return;
+
+    final path = _files[_index];
+    final name = path.split(Platform.pathSeparator).last;
+
+    setState(() => _selecting = true);
+
+    try {
+      await moveToSelected(path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _selecting = false;
+        _error = 'Could not select "$name": $e';
+      });
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() => _selecting = false);
+    _dropCurrentFile(path);
+  }
+
+  /// Drops the current entry, which has just left the folder, and moves on to
+  /// whatever takes its place. Shared by Delete and Select — they differ only
+  /// in where the file went.
+  void _dropCurrentFile(String path) {
     _dropCachedPreview(path);
 
     final nextIndex =
@@ -300,7 +392,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
       setState(() {
         _files = const [];
         _index = 0;
-        _deleting = false;
         _replaceImage(null);
         _meta = null;
         _focus = null;
@@ -314,7 +405,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
     setState(() {
       _files = remaining;
       _index = nextIndex;
-      _deleting = false;
     });
     _decodeFile(remaining[nextIndex]);
   }
@@ -404,6 +494,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
       // Routed through the same path as the button, so "Confirm delete"
       // governs the key too.
       _deleteCurrent();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyS) {
+      _selectCurrent();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyF) {
+      _fitToWindow();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -678,7 +776,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   () => _scale = (_scale / 1.25).clamp(_minScale, _maxScale)),
             ),
             IconButton(
-              tooltip: 'Fit to window',
+              tooltip: 'Fit to window  (F)',
               icon: const Icon(Icons.fit_screen, color: Colors.white70),
               onPressed: _fitToWindow,
             ),
@@ -750,9 +848,24 @@ class _ViewerScreenState extends State<ViewerScreen> {
               ),
             ),
           ],
-          // Delete controls sit at the far end, well away from Previous/Next,
-          // so a stray click while browsing cannot trash a frame.
           if (_files.isNotEmpty) ...[
+            const SizedBox(width: 16),
+            ElevatedButton.icon(
+              onPressed: _selecting ? null : _selectCurrent,
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Select  (S)'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF14532D),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFF2A3A2A),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                textStyle: const TextStyle(fontSize: 13),
+              ),
+            ),
+            // Delete controls sit at the far end, well away from
+            // Previous/Next and from Select, so a stray click while browsing
+            // cannot trash a frame.
             const SizedBox(width: 16),
             _buildConfirmDeleteCheckbox(),
             const SizedBox(width: 4),
