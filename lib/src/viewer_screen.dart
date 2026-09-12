@@ -174,6 +174,15 @@ class _ViewerScreenState extends State<ViewerScreen> {
   static const double _minScale = 0.01;
   static const double _maxScale = 20.0;
 
+  /// One press of a zoom key or button. Matches the toolbar's step so the
+  /// two routes stay in sync.
+  static const double _zoomStep = 1.25;
+
+  /// How far one pan key press moves the view, in logical screen pixels.
+  /// Deliberately not scaled by [_scale]: this is a nudge across the window,
+  /// and a step measured in image pixels would crawl when zoomed out.
+  static const double _panStep = 100.0;
+
   ui.Image? _image;
   RawMeta? _meta;
   FocusPoint? _focus;
@@ -246,6 +255,23 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _scale = scale.clamp(_minScale, _maxScale);
       _offset = Offset.zero;
     });
+  }
+
+  /// Zooms about the centre of the canvas, leaving the pan where it is.
+  ///
+  /// Unlike [_setScale] this keeps [_offset], so zooming in on a detail does
+  /// not throw the view back to the middle of the frame.
+  void _zoomBy(double factor) {
+    setState(() => _scale = (_scale * factor).clamp(_minScale, _maxScale));
+  }
+
+  /// Moves the view by [delta] logical pixels.
+  ///
+  /// The sign follows the drag gesture: the offset moves the image, so
+  /// showing what lies to the left means pushing the image right.
+  void _panBy(Offset delta) {
+    if (_image == null) return;
+    setState(() => _offset += delta);
   }
 
   void _fitToWindow() {
@@ -482,6 +508,28 @@ class _ViewerScreenState extends State<ViewerScreen> {
     // decode per repeat while a key is held.
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
+    // Ctrl turns the arrows from "browse the folder" into "pan the frame",
+    // so the unmodified keys keep culling at full speed.
+    if (HardwareKeyboard.instance.isControlPressed) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+        _panBy(const Offset(_panStep, 0));
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+        _panBy(const Offset(-_panStep, 0));
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _panBy(const Offset(0, _panStep));
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        _panBy(const Offset(0, -_panStep));
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
     if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
       _next();
       return KeyEventResult.handled;
@@ -502,6 +550,16 @@ class _ViewerScreenState extends State<ViewerScreen> {
     }
     if (event.logicalKey == LogicalKeyboardKey.keyF) {
       _fitToWindow();
+      return KeyEventResult.handled;
+    }
+    // `=` rather than `+`: it is the unshifted key, so zooming in needs no
+    // modifier and sits next to `-`.
+    if (event.logicalKey == LogicalKeyboardKey.equal) {
+      _zoomBy(_zoomStep);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.minus) {
+      _zoomBy(1 / _zoomStep);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -764,16 +822,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
           ],
           if (_image != null) ...[
             IconButton(
-              tooltip: 'Zoom in',
+              tooltip: 'Zoom in  (=)',
               icon: const Icon(Icons.zoom_in, color: Colors.white70),
-              onPressed: () => setState(
-                  () => _scale = (_scale * 1.25).clamp(_minScale, _maxScale)),
+              onPressed: () => _zoomBy(_zoomStep),
             ),
             IconButton(
-              tooltip: 'Zoom out',
+              tooltip: 'Zoom out  (-)',
               icon: const Icon(Icons.zoom_out, color: Colors.white70),
-              onPressed: () => setState(
-                  () => _scale = (_scale / 1.25).clamp(_minScale, _maxScale)),
+              onPressed: () => _zoomBy(1 / _zoomStep),
             ),
             IconButton(
               tooltip: 'Fit to window  (F)',
